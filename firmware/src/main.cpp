@@ -188,8 +188,39 @@ uint8_t g_lastRetries = 0;
 // Terminals disagree about line endings and people mistype, so a command is
 // accepted whether it arrives with CR, LF or CRLF, in any case, and with
 // stray spaces anywhere.
-char g_cmd[32];
+char g_cmd[48];
 uint8_t g_cmdLen = 0;
+uint32_t g_cmdLastCharMs = 0;
+
+// Typing arrives a keystroke at a time over a forwarded port, and a half-typed
+// line left behind by a disconnect, a paste or a stray keypress would otherwise
+// prefix the next command - which is how "unknown=netnet net off" happened. Two
+// defences: drop a partial line that has gone quiet, and accept a line whose
+// tail is a valid command even if something precedes it.
+constexpr uint32_t kCmdIdleTimeoutMs = 2000;
+
+const char* const kKnownCommands[] = {"net off", "net on"};
+
+// Returns the known command the line ends with, or nullptr.
+const char* matchCommandSuffix(const char* line) {
+  uint16_t lineLen = 0;
+  while (line[lineLen] != '\0') {
+    ++lineLen;
+  }
+  for (const char* cmd : kKnownCommands) {
+    uint16_t cmdLen = 0;
+    while (cmd[cmdLen] != '\0') {
+      ++cmdLen;
+    }
+    if (cmdLen > lineLen) {
+      continue;
+    }
+    if (strcmp(line + (lineLen - cmdLen), cmd) == 0) {
+      return cmd;
+    }
+  }
+  return nullptr;
+}
 
 // Lowercases, collapses runs of blanks to one space and trims both ends, in
 // place. "  NET   OFF \t" becomes "net off".
@@ -216,23 +247,37 @@ void normalizeCommand(char* s) {
   *w = '\0'; // a trailing pendingSpace is simply never written
 }
 
-void handleCommand(const char* cmd) {
+void handleCommand(const char* line) {
+  const char* cmd = matchCommandSuffix(line);
+  if (cmd == nullptr) {
+    Serial.printf("#NET,debug,unknown=%s\r\n", line);
+    return;
+  }
+
+  // Echo exactly what was accepted, which is the command - not whatever
+  // fragment may have preceded it on the line.
+  Serial.printf("#NET,cmd,%s\r\n", cmd);
   if (strcmp(cmd, "net off") == 0) {
-    Serial.printf("#NET,cmd,%s\r\n", cmd);
     g_logger.setNetEnabled(false);
     Serial.print("#NET,debug,net=off\r\n");
-  } else if (strcmp(cmd, "net on") == 0) {
-    Serial.printf("#NET,cmd,%s\r\n", cmd);
+  } else {
     g_logger.setNetEnabled(true);
     Serial.print("#NET,debug,net=on\r\n");
-  } else {
-    Serial.printf("#NET,debug,unknown=%s\r\n", cmd);
   }
 }
 
 void pollSerialCommand() {
+  // A line that has gone quiet mid-typing is abandoned, so its fragment cannot
+  // contaminate whatever is typed next.
+  if (g_cmdLen > 0 && (millis() - g_cmdLastCharMs) >= kCmdIdleTimeoutMs) {
+    g_cmdLen = 0;
+    Serial.print("#NET,debug,partial_discarded\r\n");
+  }
+
   while (Serial.available() > 0) {
     const int c = Serial.read();
+    g_cmdLastCharMs = millis();
+
     if (c == '\r' || c == '\n') {
       // A CRLF pair ends one command, not two: the second terminator finds an
       // empty buffer and is ignored.
@@ -247,6 +292,12 @@ void pollSerialCommand() {
       }
     } else if (g_cmdLen + 1 < sizeof(g_cmd)) {
       g_cmd[g_cmdLen++] = static_cast<char>(c);
+    } else {
+      // Overlong line: keep the tail, since that is where a command would be.
+      for (uint8_t i = 1; i < g_cmdLen; ++i) {
+        g_cmd[i - 1] = g_cmd[i];
+      }
+      g_cmd[g_cmdLen - 1] = static_cast<char>(c);
     }
   }
 }

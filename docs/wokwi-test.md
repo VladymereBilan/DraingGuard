@@ -429,7 +429,13 @@ Uploads are spaced **15.5 s** apart (the free-tier limit), so you will see rough
 **Do:**
 
 1. In the PowerShell monitor window, type `net off` and press Enter.
-2. Wait about **2 minutes**. Do not touch anything else.
+2. Wait about **3 real minutes**. Do not touch anything else.
+
+> **The simulator runs at roughly 45 % of real speed**, so simulated time passes much more
+> slowly than your wall clock. Three minutes of your time is only about 80 s of firmware
+> time — enough for 4 snapshots at one every 20 s. Judge progress by the `ms` column in
+> the CSV output and by the `#NET,ring,append,count=` lines, not by your watch. The same
+> correction applies to every wait in this document.
 
 **Expect:**
 
@@ -442,14 +448,17 @@ Then — and this is the point of the test — **the CSV lines keep coming every
 control loop is completely unaffected; sensing, clearing and the LEDs carry on as normal
 because all the networking lives on the other core.
 
-After about a minute you will see:
+**Immediately** you will see the records going to flash, one line per write:
 
 ```
-#NET,pending,aged_to_ring,ring=3
+#NET,pending,to_ring,n=1,why=link_down,ring=1
+#NET,ring,append,count=2
+#NET,ring,append,count=3
 ```
 
-That is the RAM buffer handing its records to flash. The `ring=` number grows by one per
-snapshot (one every 20 s), so after 2 minutes expect roughly **6–8**.
+Every record made while offline is written to flash straight away — none of them wait in
+RAM, and none are coalesced away. The `count=` number grows by one per snapshot (one every
+20 s of *simulated* time), so after ~3 real minutes expect roughly **4–5**.
 
 Check it in the 60-second diagnostics line:
 
@@ -475,12 +484,16 @@ Check it in the 60-second diagnostics line:
 #NET,debug,net=on
 #NET,wifi,connecting,ssid=Wokwi-GUEST
 #NET,wifi,up,ip=10.13.37.2
-#NET,bulk,n=7,ok,ring=0
+#NET,bulk,n=4,ok,ring=0
 ```
 
 **One** `#NET,bulk` line clears the whole backlog — a bulk call carries up to 60 records in
-a single request. `ring=0` means flash is empty again, and the next `#NET,STAT` confirms
-`ring=0` with `drop=0`.
+a single request, so `n=` should equal the `count=` the ring reached. `ring=0` means flash
+is empty again, and the next `#NET,STAT` confirms `ring=0` with `drop=0`.
+
+> **This is the check that matters.** `n=` must equal the number of snapshots you saw go
+> into the ring. If three snapshots went offline and only one came back, records were
+> being coalesced while offline — the bug fixed in D65.
 
 ### Part D — check the channel
 
