@@ -1,0 +1,20 @@
+# PlatformIO build output
+.pio/
+
+# VS Code - share only the recommended extension list
+.vscode/*
+!.vscode/extensions.json
+
+# Local credentials, never committed
+firmware/include/secrets.h
+.env
+tools/.env
+
+# Node / Expo
+node_modules/
+app/.expo/
+*.apk
+*.aab
+
+# OS cruft
+.DS_Store

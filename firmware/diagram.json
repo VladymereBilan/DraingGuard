@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "author": "DrainGuard",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+
+    { "type": "wokwi-hc-sr04", "id": "up", "top": -120, "left": 340, "attrs": { "distance": "30" } },
+    { "type": "wokwi-hc-sr04", "id": "down", "top": 10, "left": 340, "attrs": { "distance": "30" } },
+
+    { "type": "wokwi-resistor", "id": "r_status", "top": 160, "left": 340, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led_status", "top": 150, "left": 470, "attrs": { "color": "green", "label": "STATUS" } },
+
+    { "type": "wokwi-resistor", "id": "r_fault", "top": 215, "left": 340, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led_fault", "top": 205, "left": 470, "attrs": { "color": "red", "label": "FAULT" } },
+
+    { "type": "wokwi-resistor", "id": "r_clearing", "top": 270, "left": 340, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led_clearing", "top": 260, "left": 470, "attrs": { "color": "yellow", "label": "CLEARING" } },
+
+    { "type": "wokwi-resistor", "id": "r_in1", "top": 325, "left": 340, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led_in1", "top": 315, "left": 470, "attrs": { "color": "blue", "label": "IN1 LOWER" } },
+
+    { "type": "wokwi-resistor", "id": "r_in2", "top": 380, "left": 340, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led_in2", "top": 370, "left": 470, "attrs": { "color": "white", "label": "IN2 RAISE" } },
+
+    { "type": "wokwi-potentiometer", "id": "pot_acs", "top": -130, "left": -280, "attrs": {} },
+
+    { "type": "wokwi-pushbutton", "id": "btn_home", "top": 40, "left": -290, "attrs": { "label": "HOME", "color": "green" } },
+    { "type": "wokwi-pushbutton", "id": "btn_end", "top": 130, "left": -290, "attrs": { "label": "END", "color": "red" } },
+    { "type": "wokwi-pushbutton", "id": "btn_bin", "top": 220, "left": -290, "attrs": { "label": "BIN", "color": "blue" } }
+  ],
+  "connections": [
+    [ "esp:TX0", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX0", "$serialMonitor:TX", "", [] ],
+
+    [ "esp:VIN", "up:VCC", "red", [] ],
+    [ "esp:GND.3", "up:GND", "black", [] ],
+    [ "esp:D18", "up:TRIG", "green", [] ],
+    [ "esp:D19", "up:ECHO", "blue", [] ],
+
+    [ "esp:VIN", "down:VCC", "red", [] ],
+    [ "esp:GND.3", "down:GND", "black", [] ],
+    [ "esp:D21", "down:TRIG", "green", [] ],
+    [ "esp:D22", "down:ECHO", "blue", [] ],
+
+    [ "esp:D23", "r_status:1", "limegreen", [] ],
+    [ "r_status:2", "led_status:A", "limegreen", [] ],
+    [ "led_status:C", "esp:GND.3", "black", [] ],
+
+    [ "esp:D13", "r_fault:1", "red", [] ],
+    [ "r_fault:2", "led_fault:A", "red", [] ],
+    [ "led_fault:C", "esp:GND.1", "black", [] ],
+
+    [ "esp:D14", "r_clearing:1", "yellow", [] ],
+    [ "r_clearing:2", "led_clearing:A", "yellow", [] ],
+    [ "led_clearing:C", "esp:GND.1", "black", [] ],
+
+    [ "esp:D25", "r_in1:1", "blue", [] ],
+    [ "r_in1:2", "led_in1:A", "blue", [] ],
+    [ "led_in1:C", "esp:GND.1", "black", [] ],
+
+    [ "esp:D26", "r_in2:1", "white", [] ],
+    [ "r_in2:2", "led_in2:A", "white", [] ],
+    [ "led_in2:C", "esp:GND.1", "black", [] ],
+
+    [ "pot_acs:VCC", "esp:3V3", "red", [] ],
+    [ "pot_acs:GND", "esp:GND.2", "black", [] ],
+    [ "pot_acs:SIG", "esp:D34", "purple", [] ],
+
+    [ "esp:D32", "btn_home:1.l", "green", [] ],
+    [ "btn_home:2.l", "esp:GND.1", "black", [] ],
+
+    [ "esp:D33", "btn_end:1.l", "orange", [] ],
+    [ "btn_end:2.l", "esp:GND.1", "black", [] ],
+
+    [ "esp:D27", "btn_bin:1.l", "magenta", [] ],
+    [ "btn_bin:2.l", "esp:GND.1", "black", [] ]
+  ],
+  "serialMonitor": { "display": "always" },
+  "dependencies": {}
+}

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "author": "DrainGuard",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-hc-sr04", "id": "up", "top": -70, "left": 260, "attrs": { "distance": "30" } },
+    { "type": "wokwi-hc-sr04", "id": "down", "top": 90, "left": 260, "attrs": { "distance": "30" } },
+    { "type": "wokwi-resistor", "id": "r1", "top": 270, "left": 260, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led1", "top": 250, "left": 360, "attrs": { "color": "red" } },
+    { "type": "wokwi-resistor", "id": "r2", "top": 110, "left": -300, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led2", "top": 90, "left": -200, "attrs": { "color": "green" } },
+    { "type": "wokwi-resistor", "id": "r3", "top": 200, "left": -300, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led3", "top": 180, "left": -200, "attrs": { "color": "yellow" } },
+    { "type": "wokwi-potentiometer", "id": "pot1", "top": -60, "left": -300, "attrs": {} }
+  ],
+  "connections": [
+    [ "esp:TX0", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX0", "$serialMonitor:TX", "", [] ],
+    [ "esp:3V3", "up:VCC", "red", [] ],
+    [ "esp:GND.2", "up:GND", "black", [] ],
+    [ "esp:D18", "up:TRIG", "green", [] ],
+    [ "esp:D19", "up:ECHO", "blue", [] ],
+    [ "esp:3V3", "down:VCC", "red", [] ],
+    [ "esp:GND.2", "down:GND", "black", [] ],
+    [ "esp:D21", "down:TRIG", "green", [] ],
+    [ "esp:D22", "down:ECHO", "blue", [] ],
+    [ "esp:D23", "r1:1", "orange", [] ],
+    [ "r1:2", "led1:A", "orange", [] ],
+    [ "led1:C", "esp:GND.2", "black", [] ],
+    [ "esp:D25", "r2:1", "green", [] ],
+    [ "r2:2", "led2:A", "green", [] ],
+    [ "led2:C", "esp:GND.1", "black", [] ],
+    [ "esp:D26", "r3:1", "yellow", [] ],
+    [ "r3:2", "led3:A", "yellow", [] ],
+    [ "led3:C", "esp:GND.1", "black", [] ],
+    [ "pot1:VCC", "esp:3V3", "red", [] ],
+    [ "pot1:GND", "esp:GND.1", "black", [] ],
+    [ "pot1:SIG", "esp:D34", "purple", [] ]
+  ],
+  "serialMonitor": { "display": "always" },
+  "dependencies": {}
+}
