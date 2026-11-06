@@ -8,52 +8,10 @@
 #include "config.h"
 #include "dg_motion.h"
 #include "harness.h"
+#include "params.h"
 #include "plant.h"
 
 namespace dgtest {
-namespace {
-
-// All timings and thresholds come straight from config.h (D2).
-const dg::MotionParams kMotion = {
-    cfg::I_RUN_A,
-    cfg::JAM_FACTOR,
-    cfg::JAM_MIN_DELTA_A,
-    cfg::JAM_HOLD_MS,
-    cfg::INRUSH_BLANK_MS,
-    cfg::JAM_REVERSE_MS,
-    cfg::JAM_PAUSE_MS,
-    cfg::DEADTIME_BEFORE_REVERSE_MS,
-    cfg::TRAVEL_TIMEOUT_MS,
-    cfg::HOMING_TIMEOUT_MS,
-    cfg::MAX_RETRIES_PER_CYCLE,
-};
-
-// jam threshold = max(1.5 * 0.5, 0.5 + 0.3) = 0.8 A, so iRaise is comfortably
-// under it and iJam / iInrush are comfortably over.
-const PlantParams kPlant = {
-    2000,  // travelMsDown
-    2000,  // travelMsUp
-    0.05f, // iIdleA
-    0.10f, // iLowerA
-    0.50f, // iRaiseA
-    2.00f, // iJamA
-    250,   // inrushMs
-    2.50f, // iInrushA
-};
-
-// One full stroke, plus the dead time between the two halves of a sweep.
-constexpr uint32_t kStrokeMs = 2000;
-constexpr uint32_t kSweepMs = kStrokeMs + cfg::DEADTIME_BEFORE_REVERSE_MS + kStrokeMs;
-// Jam is reported inrush-blank + hold after a raise stroke starts.
-constexpr uint32_t kJamDetectMs = cfg::INRUSH_BLANK_MS + cfg::JAM_HOLD_MS;
-// Dead time + reverse nudge + pause, between a jam and the retry stroke.
-constexpr uint32_t kRecoverMs =
-    cfg::DEADTIME_BEFORE_REVERSE_MS + cfg::JAM_REVERSE_MS + cfg::JAM_PAUSE_MS;
-
-constexpr uint32_t kTickMs = 10;
-constexpr uint32_t kSlackMs = 200;
-
-} // namespace
 
 // 1. HOME raises until the home switch closes.
 void test_home_reaches_home() {
