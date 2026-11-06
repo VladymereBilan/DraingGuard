@@ -49,6 +49,53 @@ char g_formBuf[256];
 char g_respBuf[64];
 char g_pathBuf[64];
 
+// How much of a failing response to log. Enough to see an error message or an
+// HTML error page's opening tag without flooding the serial line.
+constexpr uint16_t kBodyLogChars = 60;
+char g_bodyLogBuf[kBodyLogChars * 2 + 4];
+
+// Escapes quotes, backslashes and newlines so a response body can never break
+// the one-line CSV-ish serial format, and truncates to kBodyLogChars.
+//
+// Only ever used on the RESPONSE. The request body carries the write key and
+// is never logged (D58).
+const char* escapeForLog(const char* body) {
+  if (body == nullptr) {
+    return "";
+  }
+  uint16_t w = 0;
+  for (uint16_t i = 0; i < kBodyLogChars && body[i] != '\0'; ++i) {
+    const char c = body[i];
+    if (static_cast<size_t>(w) + 2u >= sizeof(g_bodyLogBuf)) {
+      break;
+    }
+    switch (c) {
+      case '"':
+        g_bodyLogBuf[w++] = '\\';
+        g_bodyLogBuf[w++] = '"';
+        break;
+      case '\\':
+        g_bodyLogBuf[w++] = '\\';
+        g_bodyLogBuf[w++] = '\\';
+        break;
+      case '\r':
+        g_bodyLogBuf[w++] = '\\';
+        g_bodyLogBuf[w++] = 'r';
+        break;
+      case '\n':
+        g_bodyLogBuf[w++] = '\\';
+        g_bodyLogBuf[w++] = 'n';
+        break;
+      default:
+        // Anything unprintable becomes a dot rather than raw bytes.
+        g_bodyLogBuf[w++] = (c >= 0x20 && c < 0x7F) ? c : '.';
+        break;
+    }
+  }
+  g_bodyLogBuf[w] = '\0';
+  return g_bodyLogBuf;
+}
+
 } // namespace
 
 NetLogger::NetLogger()
@@ -295,6 +342,16 @@ void NetLogger::agePending() {
   pendingToRing("aged");
 }
 
+// Performs the exchange and hands back the status and the body. It does NOT
+// decide success: that belongs to dg::classifyBulk / dg::classifyUpdate (D68).
+//
+// This used to read the body only when httpCode was exactly 200, which meant a
+// 202 Accepted - what the bulk endpoint actually returns - arrived with an
+// empty buffer. The classifier then could not find {"success":true} and every
+// accepted batch was reported as a failure and re-sent. The body is now read
+// for any status the server actually sent.
+//
+// Returns true when the HTTP exchange completed and a status was received.
 bool NetLogger::postBody(const char* path, const char* contentType,
                          const char* body, uint16_t len, char* resp,
                          uint16_t respCap, int& httpCode) {
@@ -314,22 +371,23 @@ bool NetLogger::postBody(const char* path, const char* contentType,
 
   httpCode = http.POST(reinterpret_cast<uint8_t*>(const_cast<char*>(body)),
                        len);
-  bool ok = false;
-  if (httpCode == 200) {
+
+  // A positive code means the server answered; a negative one is a transport
+  // error from HTTPClient and carries no body.
+  if (httpCode > 0 && resp != nullptr && respCap > 0) {
     const String payload = http.getString();
-    if (resp != nullptr && respCap > 0) {
-      const uint16_t n = payload.length() < (respCap - 1)
-                             ? static_cast<uint16_t>(payload.length())
-                             : static_cast<uint16_t>(respCap - 1);
-      for (uint16_t i = 0; i < n; ++i) {
-        resp[i] = payload[i];
-      }
-      resp[n] = '\0';
+    const uint16_t cap = static_cast<uint16_t>(respCap - 1);
+    const uint16_t n = payload.length() < cap
+                           ? static_cast<uint16_t>(payload.length())
+                           : cap;
+    for (uint16_t i = 0; i < n; ++i) {
+      resp[i] = payload[i];
     }
-    ok = true;
+    resp[n] = '\0';
   }
+
   http.end();
-  return ok;
+  return httpCode > 0;
 }
 
 bool NetLogger::uploadOneLive() {
@@ -377,7 +435,8 @@ bool NetLogger::uploadOneLive() {
   }
 
   ++stats_.uploadsFailed;
-  Serial.printf("#NET,up,fail,code=%d\r\n", code);
+  Serial.printf("#NET,up,fail,code=%d,body=%s\r\n", code,
+                escapeForLog(g_respBuf));
   // Failed: park it on flash so ordering and durability are preserved (D51).
   pending_.popOldest(sr);
   appendToRing(sr);
@@ -444,8 +503,8 @@ bool NetLogger::flushRing() {
 
   if (!accepted) {
     ++stats_.uploadsFailed;
-    Serial.printf("#NET,bulk,n=%u,fail,code=%d\r\n", static_cast<unsigned>(n),
-                  code);
+    Serial.printf("#NET,bulk,n=%u,fail,code=%d,body=%s\r\n",
+                  static_cast<unsigned>(n), code, escapeForLog(g_respBuf));
     return false;
   }
 
