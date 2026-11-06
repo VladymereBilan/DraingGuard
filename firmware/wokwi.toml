@@ -5,3 +5,10 @@ version = 1
 # Produced by merge_image.py as a post-build step on the wokwi env.
 firmware = '.pio/build/wokwi/firmware.merged.bin'
 elf = '.pio/build/wokwi/firmware.elf'
+
+# The Wokwi Terminal panel in VS Code is output-only. This starts an RFC2217
+# server so an interactive monitor can attach and send keystrokes back to the
+# simulated UART - which is how the "net off" / "net on" debug commands get in.
+# Connect with:  pio device monitor --port rfc2217://localhost:4000 ...
+# See docs/wokwi-test.md test 7 for the full command.
+rfc2217ServerPort = 4000

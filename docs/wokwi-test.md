@@ -333,20 +333,66 @@ press at all.
 This is the only test that uses the network. Wokwi provides an open access point called
 `Wokwi-GUEST` and real outbound internet, so the firmware genuinely uploads to ThingSpeak.
 
-### How to type into the Wokwi serial terminal
+### How to send serial commands to the simulation
 
-The Serial Monitor panel at the bottom accepts input. **Click inside it once** so it has
-keyboard focus — the cursor appears at the end of the output — then type the command and
-press **Enter**. You will not see your own typing echoed back; only the firmware's reply
-appears. If nothing happens, you almost certainly typed into the editor instead of the
-terminal: click the terminal and try again.
+**The Wokwi Terminal panel in VS Code is output-only — you cannot type into it.** To send
+commands you attach a second, interactive monitor to the simulator's forwarded serial
+port. `firmware/wokwi.toml` enables that with:
 
-Two commands exist, and only in the Wokwi build:
+```toml
+rfc2217ServerPort = 4000
+```
+
+Do this in two windows:
+
+**1. Start the simulator as usual** — **F1** → `Wokwi: Start Simulator`. Leave the
+simulator tab **visible**; if you hide it, Wokwi pauses the simulation and you will lose
+both the output and the port.
+
+**2. Open a separate PowerShell**, go to the `firmware` folder, and run:
+
+```powershell
+cd C:\Users\ADMIN\Documents\DraingGuard\firmware
+pio device monitor --port rfc2217://localhost:4000 --baud 115200 --filter default --filter send_on_enter --echo --eol LF
+```
+
+What each part is for:
+
+| Flag | Why |
+|---|---|
+| `--port rfc2217://localhost:4000` | the port `wokwi.toml` forwards |
+| `--baud 115200` | matches `cfg::SERIAL_BAUD` |
+| `--filter send_on_enter` | buffers your typing and sends the whole line when you press **Enter**, so you can fix typos first |
+| `--filter default` | keeps normal output handling, which naming any filter would otherwise replace |
+| `--echo` | shows what you are typing (the firmware does not echo it back) |
+| `--eol LF` | what Enter transmits; the firmware accepts CR, LF or CRLF, so this is belt-and-braces |
+
+You should immediately see the firmware's CSV lines streaming in this window too — that
+confirms the port is attached.
+
+**3. Type the command and press Enter.** Two commands exist, and only in the Wokwi build:
 
 | Command | Effect |
 |---|---|
 | `net off` | pretends Wi-Fi died — uploads stop, records pile up in flash |
 | `net on` | pretends Wi-Fi came back — the backlog is flushed |
+
+Case and spacing do not matter: `net off`, `NET OFF` and `  Net   Off  ` are all accepted.
+Every accepted command is echoed back by the firmware so you know it landed:
+
+```
+#NET,cmd,net off
+#NET,debug,net=off
+```
+
+A command it does not recognise answers `#NET,debug,unknown=<what you typed>`.
+
+**To quit the monitor:** press **Ctrl+C** in that PowerShell window. That closes the
+monitor only — the simulation keeps running, and you can re-attach with the same command.
+
+> If the monitor cannot connect, the usual causes are: the simulator is not running, the
+> simulator tab is hidden (so Wokwi paused it), or a previous monitor still holds port
+> 4000 — close it with Ctrl+C first.
 
 ### Part A — boot and the first upload
 
@@ -382,7 +428,7 @@ Uploads are spaced **15.5 s** apart (the free-tier limit), so you will see rough
 
 **Do:**
 
-1. Click the serial terminal, type `net off`, press Enter.
+1. In the PowerShell monitor window, type `net off` and press Enter.
 2. Wait about **2 minutes**. Do not touch anything else.
 
 **Expect:**
@@ -421,7 +467,7 @@ Check it in the 60-second diagnostics line:
 
 ### Part C — come back online and flush
 
-**Do:** type `net on` in the terminal and press Enter. Wait about 30 seconds.
+**Do:** type `net on` in the PowerShell monitor window and press Enter. Wait about 30 s.
 
 **Expect:**
 
@@ -470,6 +516,8 @@ counter and should read 0 throughout.
 | `state` never leaves 5 and then goes to 4 | the rake never reached home — check the HOME button is not stuck |
 | `#STAT,a,b,c,d,e,f,g` | diagnostics: worst loop µs, then the sensors / safety-tick / control-tick / serial µs that make it up, then events dropped (must stay 0) and the current zero in mV. Under 10 ms is acceptable in the simulator (D60); the real board is re-measured before freeze. |
 | `#NET,...` lines never appear | the logger task failed to start — look for `#NET,begin,fail` at boot |
-| `net off` / `net on` do nothing | the terminal does not have keyboard focus — click inside the Serial Monitor panel first |
+| `net off` / `net on` do nothing | you typed into the Wokwi Terminal panel, which is output-only — use the PowerShell `pio device monitor` window instead (test 7) |
+| the monitor will not connect to port 4000 | the simulator is not running, its tab is hidden (Wokwi pauses a hidden tab), or an earlier monitor still holds the port — Ctrl+C that one first |
+| you see `#NET,debug,unknown=...` | the firmware got your line but does not know that command; only `net off` and `net on` exist |
 | `#NET,wifi,connecting` repeats forever | Wokwi's `Wokwi-GUEST` network needs the simulator to have internet access; check the Wokwi licence is active |
 | `#NET,STAT` shows `drop` climbing | records are being lost: either the queue filled (control loop far ahead of the logger) or the 200-slot ring wrapped while offline |

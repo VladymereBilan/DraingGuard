@@ -181,29 +181,70 @@ dg::MotionStatus g_lastStatus = dg::MotionStatus::IDLE;
 uint8_t g_lastRetries = 0;
 
 #ifdef DG_NET_DEBUG
-// "net off" / "net on" from the serial terminal, so the offline path can be
-// exercised in Wokwi. Reads only what is already buffered - never waits.
-char g_cmd[24];
+// "net off" / "net on" typed into an interactive monitor attached to the
+// simulator's RFC2217 port, so the offline path can be exercised in Wokwi.
+// Reads only what is already buffered - never waits.
+//
+// Terminals disagree about line endings and people mistype, so a command is
+// accepted whether it arrives with CR, LF or CRLF, in any case, and with
+// stray spaces anywhere.
+char g_cmd[32];
 uint8_t g_cmdLen = 0;
+
+// Lowercases, collapses runs of blanks to one space and trims both ends, in
+// place. "  NET   OFF \t" becomes "net off".
+void normalizeCommand(char* s) {
+  char* w = s;
+  bool pendingSpace = false;
+  bool wroteAny = false;
+  for (const char* r = s; *r != '\0'; ++r) {
+    char c = *r;
+    if (c == ' ' || c == '\t') {
+      pendingSpace = wroteAny; // never a leading space
+      continue;
+    }
+    if (c >= 'A' && c <= 'Z') {
+      c = static_cast<char>(c - 'A' + 'a');
+    }
+    if (pendingSpace) {
+      *w++ = ' ';
+      pendingSpace = false;
+    }
+    *w++ = c;
+    wroteAny = true;
+  }
+  *w = '\0'; // a trailing pendingSpace is simply never written
+}
+
+void handleCommand(const char* cmd) {
+  if (strcmp(cmd, "net off") == 0) {
+    Serial.printf("#NET,cmd,%s\r\n", cmd);
+    g_logger.setNetEnabled(false);
+    Serial.print("#NET,debug,net=off\r\n");
+  } else if (strcmp(cmd, "net on") == 0) {
+    Serial.printf("#NET,cmd,%s\r\n", cmd);
+    g_logger.setNetEnabled(true);
+    Serial.print("#NET,debug,net=on\r\n");
+  } else {
+    Serial.printf("#NET,debug,unknown=%s\r\n", cmd);
+  }
+}
 
 void pollSerialCommand() {
   while (Serial.available() > 0) {
     const int c = Serial.read();
     if (c == '\r' || c == '\n') {
+      // A CRLF pair ends one command, not two: the second terminator finds an
+      // empty buffer and is ignored.
       if (g_cmdLen == 0) {
         continue;
       }
       g_cmd[g_cmdLen] = '\0';
-      if (strcmp(g_cmd, "net off") == 0) {
-        g_logger.setNetEnabled(false);
-        Serial.print("#NET,debug,net=off\r\n");
-      } else if (strcmp(g_cmd, "net on") == 0) {
-        g_logger.setNetEnabled(true);
-        Serial.print("#NET,debug,net=on\r\n");
-      } else {
-        Serial.printf("#NET,debug,unknown=%s\r\n", g_cmd);
-      }
       g_cmdLen = 0;
+      normalizeCommand(g_cmd);
+      if (g_cmd[0] != '\0') {
+        handleCommand(g_cmd);
+      }
     } else if (g_cmdLen + 1 < sizeof(g_cmd)) {
       g_cmd[g_cmdLen++] = static_cast<char>(c);
     }
