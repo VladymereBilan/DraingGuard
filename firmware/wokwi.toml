@@ -1,4 +1,7 @@
 [wokwi]
 version = 1
-firmware = '.pio/build/wokwi/firmware.bin'
+# A full flash image, not just the app: it carries the bootloader and the
+# partition table, so LittleFS finds its "spiffs" data partition (D61).
+# Produced by merge_image.py as a post-build step on the wokwi env.
+firmware = '.pio/build/wokwi/firmware.merged.bin'
 elf = '.pio/build/wokwi/firmware.elf'

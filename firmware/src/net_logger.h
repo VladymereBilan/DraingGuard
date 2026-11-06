@@ -43,6 +43,7 @@ struct LoggerStats {
   uint32_t droppedQueueFull;      // written by the control loop
   uint32_t droppedRingOverwrite;  // written by the task
   uint32_t droppedOldBoot;        // written by the task
+  uint32_t droppedNoRing;         // FS unavailable, nowhere to buffer
   uint16_t ringCount;
   uint32_t freeHeap;
   uint32_t minFreeHeap;

@@ -77,10 +77,11 @@ NetLogger::NetLogger()
       stats_{} {}
 
 uint32_t NetLogger::droppedTotal() const {
-  // Three counters, each written by exactly one core; 32-bit aligned loads are
-  // atomic on this part, so summing them without a lock is safe.
+  // Each counter has exactly one writer and 32-bit aligned loads are atomic on
+  // this part, so summing them without a lock can be momentarily stale but
+  // never torn.
   return droppedBase_ + stats_.droppedQueueFull + stats_.droppedRingOverwrite +
-         stats_.droppedOldBoot;
+         stats_.droppedOldBoot + stats_.droppedNoRing;
 }
 
 bool NetLogger::begin(const char* ssid, const char* pass,
@@ -162,7 +163,10 @@ bool NetLogger::goOffline(const char* why) {
 
 void NetLogger::appendToRing(const dg::StoredRecord& r) {
   if (!slots_.ready()) {
-    ++stats_.droppedQueueFull; // nowhere to put it
+    // No filesystem this boot: live uploads keep working through the pending
+    // queue, but anything that needed buffering is genuinely lost and is
+    // counted into field 8 rather than quietly discarded.
+    ++stats_.droppedNoRing;
     return;
   }
   const uint32_t before = ring_.stats().overwritten;
