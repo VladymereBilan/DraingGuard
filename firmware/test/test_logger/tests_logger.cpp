@@ -12,6 +12,7 @@
 #include "dg_pending.h"
 #include "dg_record_codec.h"
 #include "dg_ring.h"
+#include "dg_route.h"
 #include "dg_timestamp.h"
 #include "fake_slots.h"
 
@@ -609,10 +610,10 @@ void test_l20_snapshot_replaces_adjacent_snapshot() {
   dg::PendingQueue q;
   bool coalesced = false;
 
-  TEST_ASSERT_TRUE(q.push(simpleRec(1000), coalesced));
+  TEST_ASSERT_TRUE(q.push(simpleRec(1000), true, coalesced));
   TEST_ASSERT_FALSE(coalesced);
 
-  TEST_ASSERT_TRUE(q.push(simpleRec(21000), coalesced));
+  TEST_ASSERT_TRUE(q.push(simpleRec(21000), true, coalesced));
   TEST_ASSERT_TRUE(coalesced); // only the newest snapshot is worth keeping
   TEST_ASSERT_EQUAL_UINT8(1, q.count());
   TEST_ASSERT_EQUAL_UINT32(1, q.coalescedTotal());
@@ -630,10 +631,10 @@ void test_l21_snapshot_after_event_appends() {
 
   dg::StoredRecord ev = makeRec(1, 1000, 0, 4, dg::kEventFault, 0, 13.0f, 10.0f,
                                 dg::kFaultStillBlocked);
-  TEST_ASSERT_TRUE(q.push(ev, coalesced));
+  TEST_ASSERT_TRUE(q.push(ev, true, coalesced));
   TEST_ASSERT_FALSE(coalesced);
 
-  TEST_ASSERT_TRUE(q.push(simpleRec(21000), coalesced));
+  TEST_ASSERT_TRUE(q.push(simpleRec(21000), true, coalesced));
   TEST_ASSERT_FALSE(coalesced); // an event is never absorbed
   TEST_ASSERT_EQUAL_UINT8(2, q.count());
 
@@ -657,7 +658,7 @@ void test_l22_events_keep_order() {
   for (uint8_t i = 0; i < 6; ++i) {
     dg::StoredRecord r = makeRec(1, 1000u + i * 100u, 0, 0, script[i], i, 13.0f,
                                  10.0f);
-    TEST_ASSERT_TRUE(q.push(r, coalesced));
+    TEST_ASSERT_TRUE(q.push(r, true, coalesced));
     TEST_ASSERT_FALSE(coalesced); // no two snapshots are ever adjacent here
   }
   TEST_ASSERT_EQUAL_UINT8(6, q.count());
@@ -678,19 +679,19 @@ void test_l23_full_queue_refuses_push() {
   for (uint8_t i = 0; i < dg::PendingQueue::kCapacity; ++i) {
     dg::StoredRecord r =
         makeRec(1, 1000u + i, 0, 0, dg::kEventFault, i, 13.0f, 10.0f);
-    TEST_ASSERT_TRUE(q.push(r, coalesced));
+    TEST_ASSERT_TRUE(q.push(r, true, coalesced));
   }
   TEST_ASSERT_TRUE(q.full());
 
   dg::StoredRecord extra =
       makeRec(1, 9999, 0, 0, dg::kEventFault, 0, 13.0f, 10.0f);
-  TEST_ASSERT_FALSE(q.push(extra, coalesced)); // caller rings it instead
+  TEST_ASSERT_FALSE(q.push(extra, true, coalesced)); // caller rings it instead
   TEST_ASSERT_EQUAL_UINT8(dg::PendingQueue::kCapacity, q.count());
 
   // Popping one makes room again.
   dg::StoredRecord out{};
   TEST_ASSERT_TRUE(q.popOldest(out));
-  TEST_ASSERT_TRUE(q.push(extra, coalesced));
+  TEST_ASSERT_TRUE(q.push(extra, true, coalesced));
 }
 
 // 24 -----------------------------------------------------------------------
@@ -916,6 +917,193 @@ void test_l29_bulk_body_omits_invalid_fields() {
   // No empty value or dangling comma was left where a field was skipped.
   TEST_ASSERT_EQUAL_UINT16(0, countOccurrences(b.body(), "\":,"));
   TEST_ASSERT_EQUAL_UINT16(0, countOccurrences(b.body(), ":}"));
+}
+
+// 30 -----------------------------------------------------------------------
+// The bug this whole module exists to prevent: while the link is down, every
+// record must reach flash. It used to go to the pending queue and be coalesced
+// away, so three snapshots made during a two-minute outage arrived as one.
+void test_l30_offline_records_always_ring() {
+  const dg::RouteParams p = {dg::PendingQueue::kCapacity, 60000u, 15500u};
+
+  // Offline, nothing queued anywhere: still the ring.
+  TEST_ASSERT_TRUE(dg::Route::RING ==
+                   dg::routeRecord(p, dg::LinkState::OFFLINE, 0, 0, true, 0));
+  // Offline and undated: still the ring.
+  TEST_ASSERT_TRUE(dg::Route::RING ==
+                   dg::routeRecord(p, dg::LinkState::OFFLINE, 0, 0, false, 0));
+  // Offline with room in RAM: the room is irrelevant.
+  TEST_ASSERT_TRUE(dg::Route::RING ==
+                   dg::routeRecord(p, dg::LinkState::OFFLINE, 0, 3, true, 0));
+
+  // Online with an empty ring and room: RAM is fine.
+  TEST_ASSERT_TRUE(dg::Route::PENDING ==
+                   dg::routeRecord(p, dg::LinkState::ONLINE, 0, 0, true, 0));
+  // Online but the ring holds a backlog: the ring keeps the ordering (D51).
+  TEST_ASSERT_TRUE(dg::Route::RING ==
+                   dg::routeRecord(p, dg::LinkState::ONLINE, 1, 0, true, 0));
+  // Online, RAM full: spill.
+  TEST_ASSERT_TRUE(
+      dg::Route::RING ==
+      dg::routeRecord(p, dg::LinkState::ONLINE, 0,
+                      dg::PendingQueue::kCapacity, true, 0));
+  // Online, undated, queue still inside its allowance: RAM (D52).
+  TEST_ASSERT_TRUE(dg::Route::PENDING ==
+                   dg::routeRecord(p, dg::LinkState::ONLINE, 0, 2, false,
+                                   59000u));
+  // Online, undated, allowance spent: flash, so it can be dated later (D52).
+  TEST_ASSERT_TRUE(dg::Route::RING ==
+                   dg::routeRecord(p, dg::LinkState::ONLINE, 0, 2, false,
+                                   60000u));
+}
+
+// 31 -----------------------------------------------------------------------
+void test_l31_coalescing_only_online_in_window() {
+  const dg::RouteParams p = {dg::PendingQueue::kCapacity, 60000u, 15500u};
+
+  // The permitted case: online, snapshot onto snapshot, window still open.
+  TEST_ASSERT_TRUE(mayCoalesce(p, dg::LinkState::ONLINE, true, true, 0));
+  TEST_ASSERT_TRUE(mayCoalesce(p, dg::LinkState::ONLINE, true, true, 15499u));
+
+  // Never while offline - that is the bug.
+  TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::OFFLINE, true, true, 0));
+
+  // Never once the window has elapsed: that pending record is about to go.
+  TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::ONLINE, true, true, 15500u));
+
+  // Never onto or from an event.
+  TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::ONLINE, false, true, 0));
+  TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::ONLINE, true, false, 0));
+}
+
+// 32 -----------------------------------------------------------------------
+// End to end: three snapshots during an outage, then one ordered bulk flush.
+void test_l32_outage_then_single_ordered_flush() {
+  const dg::RouteParams p = {dg::PendingQueue::kCapacity, 60000u, 15500u};
+  FakeSlots io(200);
+  dg::Ring ring(io);
+  ring.mount(0);
+  dg::PendingQueue pending;
+
+  // Three snapshots arrive while the link is down.
+  for (uint8_t i = 0; i < 3; ++i) {
+    dg::StoredRecord r = makeRec(1, 1000u + i * 20000u, 0, 0,
+                                 dg::kEventSnapshot, i, 13.0f, 10.0f);
+    const dg::Route route =
+        dg::routeRecord(p, dg::LinkState::OFFLINE, ring.count(),
+                        pending.count(), true, 0);
+    TEST_ASSERT_TRUE(dg::Route::RING == route);
+    TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::OFFLINE, true,
+                                  pending.newestIsSnapshot(), 0));
+    TEST_ASSERT_TRUE(ring.append(r));
+  }
+
+  // All three are on flash, in order, and nothing sat in RAM.
+  TEST_ASSERT_EQUAL_UINT16(3, ring.count());
+  TEST_ASSERT_EQUAL_UINT8(0, pending.count());
+  TEST_ASSERT_EQUAL_UINT32(0, ring.stats().overwritten);
+
+  // Reconnect: one bulk body carries all three, oldest first.
+  dg::BulkBuilder b(g_bulkBuf, kBulkBufBytes, kWriteKey);
+  uint16_t sent = 0;
+  for (uint16_t i = 0; i < ring.count(); ++i) {
+    dg::StoredRecord r{};
+    TEST_ASSERT_TRUE(ring.readAt(i, r));
+    TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(i + 1), r.seq);
+    TEST_ASSERT_EQUAL_UINT32(1000u + i * 20000u, r.uptimeMs);
+    // Dated on the way out, as the real flush does.
+    TEST_ASSERT_TRUE(dg::resolveEpoch(r, 1, 61000u, kBaseEpoch, true) ==
+                     dg::EpochFate::BACKFILLED);
+    TEST_ASSERT_TRUE(b.addEntry(r, 0));
+    ++sent;
+  }
+  TEST_ASSERT_TRUE(b.finish());
+  TEST_ASSERT_EQUAL_UINT16(3, sent);
+  assertValidBulk(b.body(), 3);
+
+  ring.dropOldest(sent);
+  TEST_ASSERT_TRUE(ring.empty());
+  TEST_ASSERT_EQUAL_UINT32(3, ring.lastDroppedSeq());
+}
+
+// 33 -----------------------------------------------------------------------
+void test_l33_pending_push_respects_permission() {
+  dg::PendingQueue q;
+  bool coalesced = false;
+
+  // Without permission a snapshot is appended, never absorbed.
+  TEST_ASSERT_TRUE(q.push(simpleRec(1000), /*allowCoalesce=*/false, coalesced));
+  TEST_ASSERT_FALSE(coalesced);
+  TEST_ASSERT_TRUE(q.newestIsSnapshot());
+  TEST_ASSERT_TRUE(q.push(simpleRec(21000), /*allowCoalesce=*/false,
+                          coalesced));
+  TEST_ASSERT_FALSE(coalesced);
+  TEST_ASSERT_EQUAL_UINT8(2, q.count());
+
+  // With permission it is absorbed, and the newest value wins.
+  TEST_ASSERT_TRUE(q.push(simpleRec(41000), /*allowCoalesce=*/true, coalesced));
+  TEST_ASSERT_TRUE(coalesced);
+  TEST_ASSERT_EQUAL_UINT8(2, q.count());
+
+  dg::StoredRecord out{};
+  TEST_ASSERT_TRUE(q.popOldest(out));
+  TEST_ASSERT_EQUAL_UINT32(1000, out.uptimeMs);
+  TEST_ASSERT_TRUE(q.popOldest(out));
+  TEST_ASSERT_EQUAL_UINT32(41000, out.uptimeMs); // 21000 was superseded
+
+  // An event is never absorbed even with permission.
+  dg::StoredRecord ev = makeRec(1, 5000, 0, 4, dg::kEventFault, 0, 13.0f,
+                                10.0f, dg::kFaultStillBlocked);
+  TEST_ASSERT_TRUE(q.push(ev, true, coalesced));
+  TEST_ASSERT_FALSE(coalesced);
+  TEST_ASSERT_FALSE(q.newestIsSnapshot());
+  TEST_ASSERT_TRUE(q.push(simpleRec(6000), true, coalesced));
+  TEST_ASSERT_FALSE(coalesced);
+  TEST_ASSERT_EQUAL_UINT8(2, q.count());
+}
+
+// 34 -----------------------------------------------------------------------
+// Every exit path a record can take is either an upload or a counted drop.
+void test_l34_drop_accounting_covers_every_exit() {
+  const dg::RouteParams p = {dg::PendingQueue::kCapacity, 60000u, 15500u};
+
+  // Exit 1: ring overwrite when the ring wraps.
+  FakeSlots io(4);
+  dg::Ring ring(io);
+  ring.mount(0);
+  for (uint32_t i = 1; i <= 6; ++i) {
+    ring.append(simpleRec(i * 100));
+  }
+  TEST_ASSERT_EQUAL_UINT32(2, ring.stats().overwritten);
+
+  // Exit 2: an undatable record from a previous boot.
+  dg::StoredRecord old = makeRec(5, 1000, 0, 0, dg::kEventSnapshot, 0, 13.0f,
+                                 10.0f);
+  TEST_ASSERT_TRUE(dg::resolveEpoch(old, 6, 5000, kBaseEpoch, true) ==
+                   dg::EpochFate::DROP_OLD_BOOT);
+
+  // Exit 3: a coalesced snapshot - allowed, but it did leave without being
+  // uploaded, so it is counted too (D65).
+  dg::PendingQueue q;
+  bool coalesced = false;
+  q.push(simpleRec(1000), false, coalesced);
+  TEST_ASSERT_TRUE(mayCoalesce(p, dg::LinkState::ONLINE, true, true, 0));
+  q.push(simpleRec(2000), true, coalesced);
+  TEST_ASSERT_TRUE(coalesced);
+  TEST_ASSERT_EQUAL_UINT32(1, q.coalescedTotal());
+
+  // Exit 4: the queue was full, which the caller counts.
+  dg::PendingQueue full;
+  for (uint8_t i = 0; i < dg::PendingQueue::kCapacity; ++i) {
+    full.push(makeRec(1, 1000u + i, 0, 0, dg::kEventFault, i, 13.0f, 10.0f),
+              false, coalesced);
+  }
+  TEST_ASSERT_FALSE(full.push(simpleRec(9999), false, coalesced));
+
+  // Field 8 is the sum of them all.
+  const uint32_t dropped = ring.stats().overwritten + 1u /*old boot*/ +
+                           q.coalescedTotal() + 1u /*queue full*/;
+  TEST_ASSERT_EQUAL_UINT32(5, dropped);
 }
 
 } // namespace dgtest

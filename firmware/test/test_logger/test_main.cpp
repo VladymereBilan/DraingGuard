@@ -60,5 +60,12 @@ int main(int argc, char **argv) {
   RUN_TEST(dgtest::test_l28_update_body_omits_invalid_fields);
   RUN_TEST(dgtest::test_l29_bulk_body_omits_invalid_fields);
 
+  // Routing (D65)
+  RUN_TEST(dgtest::test_l30_offline_records_always_ring);
+  RUN_TEST(dgtest::test_l31_coalescing_only_online_in_window);
+  RUN_TEST(dgtest::test_l32_outage_then_single_ordered_flush);
+  RUN_TEST(dgtest::test_l33_pending_push_respects_permission);
+  RUN_TEST(dgtest::test_l34_drop_accounting_covers_every_exit);
+
   return UNITY_END();
 }

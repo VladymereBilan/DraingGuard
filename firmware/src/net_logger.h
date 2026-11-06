@@ -21,6 +21,7 @@
 #include "dg_bulk_json.h"
 #include "dg_controller.h"
 #include "dg_pending.h"
+#include "dg_route.h"
 #include "dg_record_codec.h"
 #include "dg_ring.h"
 #include "fs_slots.h"
@@ -44,6 +45,7 @@ struct LoggerStats {
   uint32_t droppedRingOverwrite;  // written by the task
   uint32_t droppedOldBoot;        // written by the task
   uint32_t droppedNoRing;         // FS unavailable, nowhere to buffer
+  uint32_t droppedCoalesced;      // snapshot superseded before upload (D65)
   uint16_t ringCount;
   uint32_t freeHeap;
   uint32_t minFreeHeap;
@@ -82,8 +84,10 @@ private:
   static void taskTrampoline(void* arg);
   void taskLoop();
 
+  dg::LinkState linkState() const;
   void drainQueue();
   void agePending();
+  void pendingToRing(const char* why);
   void appendToRing(const dg::StoredRecord& r);
   bool uploadOneLive();
   bool flushRing();

@@ -1,14 +1,16 @@
 // Records waiting for the next upload window.
 //
 // Uploads are spaced 15.5 s apart but snapshots arrive every 20 s and events
-// can arrive back to back, so something has to hold them in between. This is
-// that buffer, and it is where the one permitted coalescing rule lives:
+// can arrive back to back, so something has to hold them in between.
 //
-//   a snapshot may replace the newest pending entry, but only if that entry is
-//   itself a snapshot.
+// Coalescing is possible here but is NOT decided here: push() only collapses a
+// snapshot onto the newest pending snapshot when the caller passes
+// allowCoalesce. That permission comes from dg::mayCoalesce, which refuses
+// while the link is down - the queue itself cannot know that, and when it used
+// to decide alone it silently discarded records made during an outage (D65).
 //
-// That keeps the newest reading without ever dropping an event or reordering
-// anything (D39). Everything else is a plain FIFO.
+// Everything else is a plain FIFO: an event is never absorbed and order never
+// changes (D39).
 //
 // When the buffer fills, push() fails and the caller writes the record to the
 // ring instead, so nothing is lost.
@@ -28,12 +30,18 @@ public:
 
   PendingQueue();
 
-  // coalesced is set when r replaced a pending snapshot rather than being
-  // added. Returns false only when the buffer is full.
-  bool push(const StoredRecord& r, bool& coalesced);
+  // allowCoalesce comes from dg::mayCoalesce; without it a snapshot is always
+  // appended. coalesced is set when r replaced a pending snapshot rather than
+  // being added - the caller must then account for the record it displaced.
+  // Returns false only when the buffer is full.
+  bool push(const StoredRecord& r, bool allowCoalesce, bool& coalesced);
 
   bool popOldest(StoredRecord& out);
   bool peekOldest(StoredRecord& out) const;
+
+  // True when the newest pending entry is a snapshot, which is what
+  // dg::mayCoalesce needs to know.
+  bool newestIsSnapshot() const;
 
   uint8_t count() const { return count_; }
   bool empty() const { return count_ == 0; }

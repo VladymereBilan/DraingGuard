@@ -81,7 +81,8 @@ uint32_t NetLogger::droppedTotal() const {
   // this part, so summing them without a lock can be momentarily stale but
   // never torn.
   return droppedBase_ + stats_.droppedQueueFull + stats_.droppedRingOverwrite +
-         stats_.droppedOldBoot + stats_.droppedNoRing;
+         stats_.droppedOldBoot + stats_.droppedNoRing +
+         stats_.droppedCoalesced;
 }
 
 bool NetLogger::begin(const char* ssid, const char* pass,
@@ -158,6 +159,9 @@ bool NetLogger::goOffline(const char* why) {
   stateSinceMs_ = millis();
   stats_.wifiUp = false;
   Serial.printf("#NET,wifi,down,%s\r\n", why);
+  // Whatever was waiting in RAM cannot be sent now and must not sit there
+  // being coalesced over, so it goes to flash immediately, oldest first.
+  pendingToRing("link_down");
   return false;
 }
 
@@ -176,25 +180,72 @@ void NetLogger::appendToRing(const dg::StoredRecord& r) {
     stats_.droppedRingOverwrite += (after - before);
   }
   stats_.ringCount = ring_.count();
+  // One line per flash write, so an outage is visible in the serial log rather
+  // than only showing up as a ring= count later.
+  Serial.printf("#NET,ring,append,count=%u\r\n",
+                static_cast<unsigned>(ring_.count()));
+}
+
+dg::LinkState NetLogger::linkState() const {
+  // Only a usable link counts as ONLINE: associated, and past the point where
+  // uploads actually go out.
+  return (state_ == NetState::ONLINE || state_ == NetState::FLUSHING)
+             ? dg::LinkState::ONLINE
+             : dg::LinkState::OFFLINE;
+}
+
+void NetLogger::pendingToRing(const char* why) {
+  if (pending_.empty()) {
+    return;
+  }
+  const uint8_t moved = pending_.count();
+  dg::StoredRecord sr{};
+  while (pending_.popOldest(sr)) { // oldest first, so order is preserved
+    appendToRing(sr);
+  }
+  Serial.printf("#NET,pending,to_ring,n=%u,why=%s,ring=%u\r\n",
+                static_cast<unsigned>(moved), why,
+                static_cast<unsigned>(ring_.count()));
 }
 
 void NetLogger::drainQueue() {
   if (queue_ == nullptr) {
     return;
   }
+
+  const dg::RouteParams routeParams = {dg::PendingQueue::kCapacity,
+                                       kPendingHoldMs, cfg::UPLOAD_SPACING_MS};
+
   dg::StoredRecord sr{};
   while (xQueueReceive(static_cast<QueueHandle_t>(queue_), &sr, 0) == pdTRUE) {
-    // D51: once anything is in the ring, the ring decides the order.
-    if (ring_.count() > 0) {
+    const dg::LinkState link = linkState();
+    const uint32_t pendingAge =
+        pending_.empty() ? 0u : (millis() - oldestPendingMs_);
+
+    const dg::Route route =
+        dg::routeRecord(routeParams, link, ring_.count(), pending_.count(),
+                        timeSynced_, pendingAge);
+
+    if (route == dg::Route::RING) {
       appendToRing(sr);
       continue;
     }
+
+    const bool allowCoalesce =
+        dg::mayCoalesce(routeParams, link, sr.rec.event == dg::kEventSnapshot,
+                        pending_.newestIsSnapshot(),
+                        millis() - lastUploadMs_);
+
     bool coalesced = false;
-    if (!pending_.push(sr, coalesced)) {
+    if (!pending_.push(sr, allowCoalesce, coalesced)) {
       appendToRing(sr); // RAM buffer full: spill rather than drop
       continue;
     }
-    if (pending_.count() == 1 && !coalesced) {
+    if (coalesced) {
+      // The snapshot it replaced was never uploaded, so it is accounted for
+      // like any other record that left without being sent (D65).
+      ++stats_.droppedCoalesced;
+    } else if (pending_.count() == 1) {
       oldestPendingMs_ = millis();
     }
   }
@@ -207,14 +258,9 @@ void NetLogger::agePending() {
   if ((millis() - oldestPendingMs_) < kPendingHoldMs) {
     return;
   }
-  // Held long enough without being sent - usually waiting for NTP or for the
-  // link to come back. Move the lot to flash, in order (D52).
-  dg::StoredRecord sr{};
-  while (pending_.popOldest(sr)) {
-    appendToRing(sr);
-  }
-  Serial.printf("#NET,pending,aged_to_ring,ring=%u\r\n",
-                static_cast<unsigned>(ring_.count()));
+  // Held its allowance without being sent - usually still waiting for the
+  // clock. Move the lot to flash, in order, where it can be dated later (D52).
+  pendingToRing("aged");
 }
 
 bool NetLogger::postBody(const char* path, const char* contentType,

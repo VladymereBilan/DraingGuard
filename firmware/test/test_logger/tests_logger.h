@@ -48,6 +48,13 @@ void test_l27_codec_round_trips_validity_flags();
 void test_l28_update_body_omits_invalid_fields();
 void test_l29_bulk_body_omits_invalid_fields();
 
+// Routing: offline records must reach flash (D65)
+void test_l30_offline_records_always_ring();
+void test_l31_coalescing_only_online_in_window();
+void test_l32_outage_then_single_ordered_flush();
+void test_l33_pending_push_respects_permission();
+void test_l34_drop_accounting_covers_every_exit();
+
 } // namespace dgtest
 
 #endif // DG_TESTS_LOGGER_H
