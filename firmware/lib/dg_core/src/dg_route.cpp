@@ -4,7 +4,16 @@ namespace dg {
 
 Route routeRecord(const RouteParams& params, LinkState link, uint16_t ringCount,
                   uint8_t pendingCount, bool timeSynced,
-                  uint32_t oldestPendingAgeMs) {
+                  uint32_t oldestPendingAgeMs, bool flashInhibited) {
+  // 0. The motor is running, so flash is off limits whatever else is true: a
+  //    write would stall the cache and with it the safety loop (D66). RAM is
+  //    the only option, and if RAM is full the record is genuinely lost and
+  //    must be counted rather than quietly discarded.
+  if (flashInhibited) {
+    return (pendingCount < params.pendingCapacity) ? Route::PENDING
+                                                   : Route::DROP;
+  }
+
   // 1. Offline: flash or nothing. This is the rule whose absence lost records.
   if (link != LinkState::ONLINE) {
     return Route::RING;
@@ -30,10 +39,15 @@ Route routeRecord(const RouteParams& params, LinkState link, uint16_t ringCount,
 }
 
 bool mayCoalesce(const RouteParams& params, LinkState link,
-                 bool recordIsSnapshot, bool newestPendingIsSnapshot,
-                 uint32_t msSinceLastUpload) {
+                 bool flashInhibited, bool recordIsSnapshot,
+                 bool newestPendingIsSnapshot, uint32_t msSinceLastUpload) {
   if (link != LinkState::ONLINE) {
     return false; // never discard a record we cannot send
+  }
+  if (flashInhibited) {
+    // These are only in RAM because flash is closed; they still have to reach
+    // the ring once the stroke ends, so none of them may be absorbed (D66).
+    return false;
   }
   if (!recordIsSnapshot || !newestPendingIsSnapshot) {
     return false; // only a snapshot may absorb a snapshot

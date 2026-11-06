@@ -71,5 +71,10 @@ int main(int argc, char **argv) {
   RUN_TEST(dgtest::test_l35_bulk_202_is_success);
   RUN_TEST(dgtest::test_l36_update_needs_nonzero_id);
 
+  // Flash inhibit while the motor runs (D66)
+  RUN_TEST(dgtest::test_l37_flash_inhibited_never_rings);
+  RUN_TEST(dgtest::test_l38_pending_capacity_covers_longest_stroke);
+  RUN_TEST(dgtest::test_l39_pending_drains_to_ring_in_order);
+
   return UNITY_END();
 }

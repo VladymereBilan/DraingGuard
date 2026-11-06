@@ -9,6 +9,13 @@
 // So the decision lives here instead, as a pure function with tests. The rules,
 // in priority order:
 //
+//   0. Flash inhibited       -> PENDING, or DROP if RAM is full. Writing to
+//                               flash stalls the instruction cache, which
+//                               freezes the 10 ms safety loop on the other
+//                               core; a sector erase can take ~50 ms and the
+//                               rake would sail past a limit switch. So while
+//                               the motor is running, nothing touches flash and
+//                               records wait in RAM (D66).
 //   1. Not ONLINE            -> RING. An offline record must reach flash; RAM is
 //                               not durable and the pending queue coalesces.
 //   2. Ring already has data -> RING. The ring is the single ordering authority,
@@ -38,6 +45,7 @@ enum class LinkState : uint8_t {
 enum class Route : uint8_t {
   RING,    // write to flash
   PENDING, // hold in RAM for the next upload window
+  DROP,    // nowhere to put it; the caller counts it in field 8
 };
 
 struct RouteParams {
@@ -48,14 +56,15 @@ struct RouteParams {
 
 Route routeRecord(const RouteParams& params, LinkState link, uint16_t ringCount,
                   uint8_t pendingCount, bool timeSynced,
-                  uint32_t oldestPendingAgeMs);
+                  uint32_t oldestPendingAgeMs, bool flashInhibited);
 
 // True only when a snapshot may replace the newest pending snapshot. Requires
-// the link to be up and the current upload window still open, so the record
-// being discarded was never about to be sent (D65).
+// the link to be up, the current upload window still open, and flash not
+// inhibited - while it is, the pending records are destined for the ring and
+// must not be coalesced away (D65 with D66).
 bool mayCoalesce(const RouteParams& params, LinkState link,
-                 bool recordIsSnapshot, bool newestPendingIsSnapshot,
-                 uint32_t msSinceLastUpload);
+                 bool flashInhibited, bool recordIsSnapshot,
+                 bool newestPendingIsSnapshot, uint32_t msSinceLastUpload);
 
 } // namespace dg
 

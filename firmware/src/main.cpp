@@ -27,6 +27,8 @@
 
 #include <Arduino.h>
 
+#include <atomic>
+
 #include "config.h"
 #include "net_config.h" // credentials; also enforces that secrets.h exists
 
@@ -174,6 +176,20 @@ bool due(uint32_t& nextMs, uint32_t nowMs, uint32_t periodMs) {
 // Latched button edges, consumed by the next controller tick.
 bool g_shortPressLatch = false;
 bool g_holdLatch = false;
+
+// True whenever the motor is energised or a motion job is still in progress.
+// The logger reads this and refuses to touch flash while it is set: a LittleFS
+// or NVS write stalls the instruction cache, which freezes this loop on the
+// other core, and a sector erase can take ~50 ms - long enough for the rake to
+// run past a limit switch (D66).
+std::atomic<bool> g_motionActive{false};
+
+// Controller persistence requests that arrived mid-stroke and are waiting for
+// the motor to stop.
+bool g_deferredSaveBaseline = false;
+float g_deferredBaselineCm = 0.0f;
+bool g_deferredSaveCycles = false;
+uint16_t g_deferredCycles = 0;
 
 // Most recent supervisor result, handed to the controller on its own cadence.
 dg::MotorCmd g_lastCmd = dg::MotorCmd::STOP;
@@ -381,6 +397,7 @@ void setup() {
 
   // One beginBoot() per boot: it increments bootId, so nothing else may call it.
   const hal::NetPersist persisted = g_netStore.beginBoot();
+  g_logger.setMotionActiveFlag(&g_motionActive);
   if (!g_logger.begin(net::WIFI_SSID_STR, net::WIFI_PASS_STR,
                       net::TS_CHANNEL_ID_STR, net::TS_WRITE_KEY_STR,
                       persisted)) {
@@ -436,6 +453,13 @@ void loop() {
     const dg::MotionOutput mo = g_sup.tick(mi);
     g_motor.apply(mo.cmd);
 
+    // Published before anything else uses it: BUSY covers the dead-time and
+    // jam-pause phases, where the command is STOP but the motor is about to
+    // move again, so flash stays closed across a whole recovery (D66).
+    g_motionActive.store(mo.cmd != dg::MotorCmd::STOP ||
+                             mo.status == dg::MotionStatus::BUSY,
+                         std::memory_order_relaxed);
+
     // A raise stroke just ended: report the peak running current so I_RUN_A can
     // be calibrated from real strokes on the bench (D64). The peak excludes the
     // inrush window, so it reflects running load rather than the start-up surge.
@@ -489,11 +513,27 @@ void loop() {
 
     g_io.setLeds(co.ledStatus, co.ledFault, co.ledClearing, nowMs);
 
+    // Persistence requests are normally issued with the motor already stopped
+    // (a baseline completes in BASELINE; a cycle count on a finished sweep),
+    // but a bin press can land mid-stroke - so they are queued and written
+    // once the motor is idle (D66).
     if (co.saveBaseline) {
-      g_storage.saveBaseline(co.baselineCm);
+      g_deferredSaveBaseline = true;
+      g_deferredBaselineCm = co.baselineCm;
     }
     if (co.saveCyclesSinceEmptied) {
-      g_storage.saveCycles(co.cyclesSinceEmptied);
+      g_deferredSaveCycles = true;
+      g_deferredCycles = co.cyclesSinceEmptied;
+    }
+    if (!g_motionActive.load(std::memory_order_relaxed)) {
+      if (g_deferredSaveBaseline) {
+        g_storage.saveBaseline(g_deferredBaselineCm);
+        g_deferredSaveBaseline = false;
+      }
+      if (g_deferredSaveCycles) {
+        g_storage.saveCycles(g_deferredCycles);
+        g_deferredSaveCycles = false;
+      }
     }
 
     keepMax(g_controlMaxUs, micros() - controlStartUs);

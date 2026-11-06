@@ -15,6 +15,7 @@
 #ifndef DG_NET_LOGGER_H
 #define DG_NET_LOGGER_H
 
+#include <atomic>
 #include <stdint.h>
 
 #include "boot_id.h"
@@ -47,6 +48,7 @@ struct LoggerStats {
   uint32_t droppedOldBoot;        // written by the task
   uint32_t droppedNoRing;         // FS unavailable, nowhere to buffer
   uint32_t droppedCoalesced;      // snapshot superseded before upload (D65)
+  uint32_t droppedFlashInhibited; // RAM full while the motor ran (D66)
   uint16_t ringCount;
   uint32_t freeHeap;
   uint32_t minFreeHeap;
@@ -70,6 +72,14 @@ public:
   // Called from the 200 ms control tick. Never blocks.
   void submit(const dg::Record& r, uint32_t uptimeMs);
 
+  // While the pointed-to flag reads true the logger performs no flash writes
+  // at all - no ring append, no ack, no NVS - because a write stalls the
+  // instruction cache and with it the 10 ms safety loop (D66). The caller owns
+  // the flag; nullptr means never inhibited.
+  void setMotionActiveFlag(const std::atomic<bool>* flag) {
+    motionActive_ = flag;
+  }
+
   // ThingSpeak field 8: queue overruns + ring overwrites + undatable records.
   uint32_t droppedTotal() const;
 
@@ -86,6 +96,7 @@ private:
   void taskLoop();
 
   dg::LinkState linkState() const;
+  bool flashInhibited() const;
   void drainQueue();
   void agePending();
   void pendingToRing(const char* why);
@@ -113,6 +124,10 @@ private:
   NetState state_;
   bool timeSynced_;
   bool netEnabled_;
+
+  const std::atomic<bool>* motionActive_;
+  bool wasInhibited_;
+  bool deferredWrites_;
 
   uint32_t stateSinceMs_;
   uint32_t lastAttemptMs_;

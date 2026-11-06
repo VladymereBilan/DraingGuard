@@ -59,6 +59,11 @@ void test_l34_drop_accounting_covers_every_exit();
 void test_l35_bulk_202_is_success();
 void test_l36_update_needs_nonzero_id();
 
+// No flash writes while the motor runs (D66)
+void test_l37_flash_inhibited_never_rings();
+void test_l38_pending_capacity_covers_longest_stroke();
+void test_l39_pending_drains_to_ring_in_order();
+
 } // namespace dgtest
 
 #endif // DG_TESTS_LOGGER_H

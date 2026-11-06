@@ -62,6 +62,9 @@ NetLogger::NetLogger()
       state_(NetState::FS_MOUNT),
       timeSynced_(false),
       netEnabled_(true),
+      motionActive_(nullptr),
+      wasInhibited_(false),
+      deferredWrites_(false),
       stateSinceMs_(0),
       lastAttemptMs_(0),
       backoffMs_(kBackoffMinMs),
@@ -82,7 +85,7 @@ uint32_t NetLogger::droppedTotal() const {
   // never torn.
   return droppedBase_ + stats_.droppedQueueFull + stats_.droppedRingOverwrite +
          stats_.droppedOldBoot + stats_.droppedNoRing +
-         stats_.droppedCoalesced;
+         stats_.droppedCoalesced + stats_.droppedFlashInhibited;
 }
 
 bool NetLogger::begin(const char* ssid, const char* pass,
@@ -166,6 +169,16 @@ bool NetLogger::goOffline(const char* why) {
 }
 
 void NetLogger::appendToRing(const dg::StoredRecord& r) {
+  if (flashInhibited()) {
+    // Backstop: routing should already have sent this to RAM. If it did not,
+    // park it rather than writing flash mid-stroke (D66).
+    bool coalesced = false;
+    if (!pending_.push(r, /*allowCoalesce=*/false, coalesced)) {
+      ++stats_.droppedFlashInhibited;
+    }
+    deferredWrites_ = true;
+    return;
+  }
   if (!slots_.ready()) {
     // No filesystem this boot: live uploads keep working through the pending
     // queue, but anything that needed buffering is genuinely lost and is
@@ -186,6 +199,13 @@ void NetLogger::appendToRing(const dg::StoredRecord& r) {
                 static_cast<unsigned>(ring_.count()));
 }
 
+bool NetLogger::flashInhibited() const {
+  // Relaxed is enough: this is a single flag written by one core and read by
+  // the other, and being one logger pass late is harmless either way.
+  return motionActive_ != nullptr &&
+         motionActive_->load(std::memory_order_relaxed);
+}
+
 dg::LinkState NetLogger::linkState() const {
   // Only a usable link counts as ONLINE: associated, and past the point where
   // uploads actually go out.
@@ -196,6 +216,10 @@ dg::LinkState NetLogger::linkState() const {
 
 void NetLogger::pendingToRing(const char* why) {
   if (pending_.empty()) {
+    return;
+  }
+  if (flashInhibited()) {
+    deferredWrites_ = true; // resume on the first pass after the stroke ends
     return;
   }
   const uint8_t moved = pending_.count();
@@ -222,19 +246,27 @@ void NetLogger::drainQueue() {
     const uint32_t pendingAge =
         pending_.empty() ? 0u : (millis() - oldestPendingMs_);
 
+    const bool inhibited = flashInhibited();
     const dg::Route route =
         dg::routeRecord(routeParams, link, ring_.count(), pending_.count(),
-                        timeSynced_, pendingAge);
+                        timeSynced_, pendingAge, inhibited);
 
     if (route == dg::Route::RING) {
       appendToRing(sr);
       continue;
     }
+    if (route == dg::Route::DROP) {
+      // RAM filled during a stroke. Nowhere left to put it (D66).
+      ++stats_.droppedFlashInhibited;
+      continue;
+    }
+    if (inhibited) {
+      deferredWrites_ = true;
+    }
 
-    const bool allowCoalesce =
-        dg::mayCoalesce(routeParams, link, sr.rec.event == dg::kEventSnapshot,
-                        pending_.newestIsSnapshot(),
-                        millis() - lastUploadMs_);
+    const bool allowCoalesce = dg::mayCoalesce(
+        routeParams, link, inhibited, sr.rec.event == dg::kEventSnapshot,
+        pending_.newestIsSnapshot(), millis() - lastUploadMs_);
 
     bool coalesced = false;
     if (!pending_.push(sr, allowCoalesce, coalesced)) {
@@ -429,6 +461,10 @@ bool NetLogger::flushRing() {
 }
 
 void NetLogger::persistCounters() {
+  if (flashInhibited()) {
+    deferredWrites_ = true;
+    return;
+  }
   // Both are no-ops unless the value moved, so this is a handful of NVS writes
   // a day (D48/D53).
   store_.saveAck(ring_.lastDroppedSeq());
@@ -548,8 +584,13 @@ void NetLogger::taskLoop() {
         state_ = ring_.count() > 0 ? NetState::FLUSHING : NetState::ONLINE;
         if (spacingElapsed() && timeSynced_) {
           if (state_ == NetState::FLUSHING) {
-            flushRing();
+            // A successful flush drops from the ring and persists the ack,
+            // both of which touch flash, so it waits for the stroke (D66).
+            if (!flashInhibited()) {
+              flushRing();
+            }
           } else {
+            // A live /update writes no flash, so it may go out mid-stroke.
             uploadOneLive();
           }
         }
@@ -557,6 +598,23 @@ void NetLogger::taskLoop() {
     }
 
     drainQueue();
+
+    // The stroke has finished: write out whatever was held back, on this pass.
+    const bool inhibitedNow = flashInhibited();
+    if (wasInhibited_ && !inhibitedNow && deferredWrites_) {
+      Serial.printf("#NET,flash,deferred,n=%u\r\n",
+                    static_cast<unsigned>(pending_.count()));
+      deferredWrites_ = false;
+      // Anything that was only in RAM because flash was closed belongs in the
+      // ring, unless the link is up and the ring is empty - in which case it
+      // can simply be uploaded from RAM on the next window.
+      if (linkState() != dg::LinkState::ONLINE || ring_.count() > 0) {
+        pendingToRing("inhibit_cleared");
+      }
+      persistCounters();
+    }
+    wasInhibited_ = inhibitedNow;
+
     agePending();
     stats_.ringCount = ring_.count();
 

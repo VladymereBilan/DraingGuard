@@ -929,33 +929,33 @@ void test_l30_offline_records_always_ring() {
 
   // Offline, nothing queued anywhere: still the ring.
   TEST_ASSERT_TRUE(dg::Route::RING ==
-                   dg::routeRecord(p, dg::LinkState::OFFLINE, 0, 0, true, 0));
+                   dg::routeRecord(p, dg::LinkState::OFFLINE, 0, 0, true, 0, false));
   // Offline and undated: still the ring.
   TEST_ASSERT_TRUE(dg::Route::RING ==
-                   dg::routeRecord(p, dg::LinkState::OFFLINE, 0, 0, false, 0));
+                   dg::routeRecord(p, dg::LinkState::OFFLINE, 0, 0, false, 0, false));
   // Offline with room in RAM: the room is irrelevant.
   TEST_ASSERT_TRUE(dg::Route::RING ==
-                   dg::routeRecord(p, dg::LinkState::OFFLINE, 0, 3, true, 0));
+                   dg::routeRecord(p, dg::LinkState::OFFLINE, 0, 3, true, 0, false));
 
   // Online with an empty ring and room: RAM is fine.
   TEST_ASSERT_TRUE(dg::Route::PENDING ==
-                   dg::routeRecord(p, dg::LinkState::ONLINE, 0, 0, true, 0));
+                   dg::routeRecord(p, dg::LinkState::ONLINE, 0, 0, true, 0, false));
   // Online but the ring holds a backlog: the ring keeps the ordering (D51).
   TEST_ASSERT_TRUE(dg::Route::RING ==
-                   dg::routeRecord(p, dg::LinkState::ONLINE, 1, 0, true, 0));
+                   dg::routeRecord(p, dg::LinkState::ONLINE, 1, 0, true, 0, false));
   // Online, RAM full: spill.
   TEST_ASSERT_TRUE(
       dg::Route::RING ==
       dg::routeRecord(p, dg::LinkState::ONLINE, 0,
-                      dg::PendingQueue::kCapacity, true, 0));
+                      dg::PendingQueue::kCapacity, true, 0, false));
   // Online, undated, queue still inside its allowance: RAM (D52).
   TEST_ASSERT_TRUE(dg::Route::PENDING ==
                    dg::routeRecord(p, dg::LinkState::ONLINE, 0, 2, false,
-                                   59000u));
+                                   59000u, false));
   // Online, undated, allowance spent: flash, so it can be dated later (D52).
   TEST_ASSERT_TRUE(dg::Route::RING ==
                    dg::routeRecord(p, dg::LinkState::ONLINE, 0, 2, false,
-                                   60000u));
+                                   60000u, false));
 }
 
 // 31 -----------------------------------------------------------------------
@@ -963,18 +963,18 @@ void test_l31_coalescing_only_online_in_window() {
   const dg::RouteParams p = {dg::PendingQueue::kCapacity, 60000u, 15500u};
 
   // The permitted case: online, snapshot onto snapshot, window still open.
-  TEST_ASSERT_TRUE(mayCoalesce(p, dg::LinkState::ONLINE, true, true, 0));
-  TEST_ASSERT_TRUE(mayCoalesce(p, dg::LinkState::ONLINE, true, true, 15499u));
+  TEST_ASSERT_TRUE(mayCoalesce(p, dg::LinkState::ONLINE, false, true, true, 0));
+  TEST_ASSERT_TRUE(mayCoalesce(p, dg::LinkState::ONLINE, false, true, true, 15499u));
 
   // Never while offline - that is the bug.
-  TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::OFFLINE, true, true, 0));
+  TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::OFFLINE, false, true, true, 0));
 
   // Never once the window has elapsed: that pending record is about to go.
-  TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::ONLINE, true, true, 15500u));
+  TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::ONLINE, false, true, true, 15500u));
 
   // Never onto or from an event.
-  TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::ONLINE, false, true, 0));
-  TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::ONLINE, true, false, 0));
+  TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::ONLINE, false, false, true, 0));
+  TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::ONLINE, false, true, false, 0));
 }
 
 // 32 -----------------------------------------------------------------------
@@ -992,9 +992,9 @@ void test_l32_outage_then_single_ordered_flush() {
                                  dg::kEventSnapshot, i, 13.0f, 10.0f);
     const dg::Route route =
         dg::routeRecord(p, dg::LinkState::OFFLINE, ring.count(),
-                        pending.count(), true, 0);
+                        pending.count(), true, 0, /*flashInhibited=*/false);
     TEST_ASSERT_TRUE(dg::Route::RING == route);
-    TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::OFFLINE, true,
+    TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::OFFLINE, false, true,
                                   pending.newestIsSnapshot(), 0));
     TEST_ASSERT_TRUE(ring.append(r));
   }
@@ -1088,7 +1088,7 @@ void test_l34_drop_accounting_covers_every_exit() {
   dg::PendingQueue q;
   bool coalesced = false;
   q.push(simpleRec(1000), false, coalesced);
-  TEST_ASSERT_TRUE(mayCoalesce(p, dg::LinkState::ONLINE, true, true, 0));
+  TEST_ASSERT_TRUE(mayCoalesce(p, dg::LinkState::ONLINE, false, true, true, 0));
   q.push(simpleRec(2000), true, coalesced);
   TEST_ASSERT_TRUE(coalesced);
   TEST_ASSERT_EQUAL_UINT32(1, q.coalescedTotal());
@@ -1167,6 +1167,123 @@ void test_l36_update_needs_nonzero_id() {
   TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyUpdate(429, "17"));
   TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyUpdate(500, ""));
   TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyUpdate(200, nullptr));
+}
+
+// 37 -----------------------------------------------------------------------
+// While the motor runs, nothing may touch flash - a write stalls the cache and
+// freezes the 10 ms safety loop, and the rake would overshoot a limit switch
+// (D66). Records wait in RAM instead, even when offline.
+void test_l37_flash_inhibited_never_rings() {
+  const dg::RouteParams p = {dg::PendingQueue::kCapacity, 60000u, 15500u};
+
+  // Inhibited beats every other rule, including "offline means ring".
+  TEST_ASSERT_TRUE(dg::Route::PENDING ==
+                   dg::routeRecord(p, dg::LinkState::OFFLINE, 0, 0, true, 0,
+                                   true));
+  // ...and including "a backlog outranks everything".
+  TEST_ASSERT_TRUE(dg::Route::PENDING ==
+                   dg::routeRecord(p, dg::LinkState::OFFLINE, 5, 0, true, 0,
+                                   true));
+  TEST_ASSERT_TRUE(dg::Route::PENDING ==
+                   dg::routeRecord(p, dg::LinkState::ONLINE, 5, 0, true, 0,
+                                   true));
+  // ...and including the pre-NTP hold expiring.
+  TEST_ASSERT_TRUE(dg::Route::PENDING ==
+                   dg::routeRecord(p, dg::LinkState::ONLINE, 0, 2, false,
+                                   99999u, true));
+
+  // Only when RAM is full is there nowhere left, and then it is counted.
+  TEST_ASSERT_TRUE(dg::Route::DROP ==
+                   dg::routeRecord(p, dg::LinkState::OFFLINE, 0,
+                                   dg::PendingQueue::kCapacity, true, 0, true));
+
+  // Nothing held in RAM for this reason may be coalesced away: it still has to
+  // reach the ring once the stroke ends.
+  TEST_ASSERT_FALSE(
+      mayCoalesce(p, dg::LinkState::ONLINE, true, true, true, 0));
+
+  // The same situations without the inhibit go to flash as before.
+  TEST_ASSERT_TRUE(dg::Route::RING ==
+                   dg::routeRecord(p, dg::LinkState::OFFLINE, 0, 0, true, 0,
+                                   false));
+  TEST_ASSERT_TRUE(dg::Route::RING ==
+                   dg::routeRecord(p, dg::LinkState::ONLINE, 5, 0, true, 0,
+                                   false));
+}
+
+// 38 -----------------------------------------------------------------------
+// Capacity check: the longest possible stroke must not overflow the RAM queue.
+// A sweep with both retries is bounded by 2 travel timeouts plus recoveries,
+// and snapshots arrive every 20 s, so the worst case is a handful of records.
+void test_l38_pending_capacity_covers_longest_stroke() {
+  // Worst-case clearing attempt: down timeout + recovery + raise timeout +
+  // recovery + a final stroke, which is what MAX_RETRIES_PER_CYCLE allows.
+  constexpr uint32_t kTravelTimeoutMs = 15000;
+  constexpr uint32_t kRecoveryMs = 100 + 500 + 1000;
+  constexpr uint32_t kWorstStrokeMs =
+      3 * kTravelTimeoutMs + 2 * kRecoveryMs; // ~48.2 s
+  constexpr uint32_t kSnapshotMs = 20000;
+
+  // Records produced during it: snapshots plus a couple of event records.
+  constexpr uint32_t kSnapshots = (kWorstStrokeMs / kSnapshotMs) + 1; // 3
+  constexpr uint32_t kEventsDuringStroke = 2; // jam-retry record, bin press
+  constexpr uint32_t kWorstRecords = kSnapshots + kEventsDuringStroke; // 5
+
+  TEST_ASSERT_TRUE(kWorstRecords <= dg::PendingQueue::kCapacity);
+
+  // And prove the queue really holds that many without coalescing any of them.
+  dg::PendingQueue q;
+  bool coalesced = false;
+  for (uint32_t i = 0; i < kWorstRecords; ++i) {
+    dg::StoredRecord r = makeRec(1, 1000u + i * kSnapshotMs, 0, 2,
+                                 dg::kEventSnapshot, 0, 13.0f, 10.0f);
+    TEST_ASSERT_TRUE(q.push(r, /*allowCoalesce=*/false, coalesced));
+    TEST_ASSERT_FALSE(coalesced);
+  }
+  TEST_ASSERT_EQUAL_UINT8(kWorstRecords, q.count());
+  TEST_ASSERT_FALSE(q.full());
+  TEST_ASSERT_EQUAL_UINT32(0, q.coalescedTotal());
+}
+
+// 39 -----------------------------------------------------------------------
+// When the stroke ends, everything held in RAM reaches the ring in order.
+void test_l39_pending_drains_to_ring_in_order() {
+  const dg::RouteParams p = {dg::PendingQueue::kCapacity, 60000u, 15500u};
+  FakeSlots io(200);
+  dg::Ring ring(io);
+  ring.mount(0);
+  dg::PendingQueue pending;
+  bool coalesced = false;
+
+  // Offline and mid-stroke: three records, all into RAM, none coalesced.
+  for (uint8_t i = 0; i < 3; ++i) {
+    dg::StoredRecord r = makeRec(1, 1000u + i * 20000u, 0, 2,
+                                 dg::kEventSnapshot, i, 13.0f, 10.0f);
+    TEST_ASSERT_TRUE(dg::Route::PENDING ==
+                     dg::routeRecord(p, dg::LinkState::OFFLINE, ring.count(),
+                                     pending.count(), true, 0, true));
+    TEST_ASSERT_FALSE(mayCoalesce(p, dg::LinkState::OFFLINE, true, true,
+                                  pending.newestIsSnapshot(), 0));
+    TEST_ASSERT_TRUE(pending.push(r, false, coalesced));
+  }
+  TEST_ASSERT_EQUAL_UINT8(3, pending.count());
+  TEST_ASSERT_TRUE(ring.empty()); // nothing touched flash during the stroke
+
+  // Stroke ends: drain oldest first.
+  dg::StoredRecord sr{};
+  while (pending.popOldest(sr)) {
+    TEST_ASSERT_TRUE(ring.append(sr));
+  }
+  TEST_ASSERT_TRUE(pending.empty());
+  TEST_ASSERT_EQUAL_UINT16(3, ring.count());
+
+  for (uint16_t i = 0; i < 3; ++i) {
+    dg::StoredRecord r{};
+    TEST_ASSERT_TRUE(ring.readAt(i, r));
+    TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(i + 1), r.seq);
+    TEST_ASSERT_EQUAL_UINT32(1000u + i * 20000u, r.uptimeMs);
+    TEST_ASSERT_EQUAL_UINT16(i, r.rec.cycles);
+  }
 }
 
 } // namespace dgtest
