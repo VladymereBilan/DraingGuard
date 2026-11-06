@@ -329,6 +329,79 @@ void test_stop_job_while_busy() {
   TEST_ASSERT_EQUAL(dg::MotionStatus::IDLE, out.status);
 }
 
+// 19. A negative jam current is still a jam: an ACS712 fitted the other way
+// round must not silently disable jam detection (D64).
+void test_negative_jam_current_detected() {
+  // Same plant, but the jam and inrush currents read negative.
+  PlantParams reversed = kPlant;
+  reversed.iJamA = -2.00f;
+  reversed.iRaiseA = -0.50f;
+  reversed.iLowerA = -0.10f;
+
+  dg::MotionSupervisor sup(kMotion);
+  Plant plant(reversed);
+  MotionHarness h(sup, plant, cfg::DEADTIME_BEFORE_REVERSE_MS);
+  plant.placeAtEnd();
+  plant.injectJamOnRaise(true);
+
+  const MotionObs obs = h.runJob(dg::Job::HOME, 30000);
+
+  // Detected on the magnitude, at the same moment a +2 A jam would be.
+  TEST_ASSERT_EQUAL(dg::MotionStatus::FAILED_TIMEOUT, obs.status);
+  TEST_ASSERT_UINT32_WITHIN(kSlackMs, kJamDetectMs, obs.elapsedMs);
+  TEST_ASSERT_EQUAL(dg::MotorCmd::STOP, h.last().cmd);
+
+  // And -0.5 A of ordinary running current is still under the 0.8 A threshold,
+  // so a reversed sensor does not invent jams either.
+  dg::MotionSupervisor sup2(kMotion);
+  Plant plant2(reversed);
+  MotionHarness h2(sup2, plant2, cfg::DEADTIME_BEFORE_REVERSE_MS);
+  plant2.placeAtHome();
+  const MotionObs clean = h2.runJob(dg::Job::SWEEP, 30000);
+  TEST_ASSERT_EQUAL(dg::MotionStatus::DONE, clean.status);
+  TEST_ASSERT_EQUAL_UINT8(0, clean.retriesUsed);
+}
+
+// 20. A negative inrush spike inside the blanking window is still ignored.
+void test_negative_inrush_spike_ignored() {
+  PlantParams reversed = kPlant;
+  reversed.iInrushA = -2.50f;
+  reversed.iRaiseA = -0.50f;
+  reversed.iLowerA = -0.10f;
+
+  dg::MotionSupervisor sup(kMotion);
+  Plant plant(reversed);
+  MotionHarness h(sup, plant, cfg::DEADTIME_BEFORE_REVERSE_MS);
+  plant.placeAtHome();
+  plant.setInrush(true);
+
+  // The spike's magnitude clears the threshold, so only blanking saves us.
+  TEST_ASSERT_TRUE(-reversed.iInrushA > sup.jamThresholdA());
+  TEST_ASSERT_TRUE(reversed.inrushMs < cfg::INRUSH_BLANK_MS);
+
+  const MotionObs obs = h.runJob(dg::Job::SWEEP, 30000);
+  TEST_ASSERT_EQUAL(dg::MotionStatus::DONE, obs.status);
+  TEST_ASSERT_EQUAL_UINT8(0, obs.retriesUsed);
+}
+
+// 21. The per-stroke peak tracks magnitude and resets each stroke, so it is
+// usable for calibrating I_RUN_A from the bench.
+void test_stroke_peak_tracks_magnitude() {
+  PlantParams reversed = kPlant;
+  reversed.iRaiseA = -0.60f;
+  reversed.iLowerA = -0.10f;
+
+  dg::MotionSupervisor sup(kMotion);
+  Plant plant(reversed);
+  MotionHarness h(sup, plant, cfg::DEADTIME_BEFORE_REVERSE_MS);
+  plant.placeAtEnd();
+
+  const MotionObs obs = h.runJob(dg::Job::HOME, 30000);
+  TEST_ASSERT_EQUAL(dg::MotionStatus::DONE, obs.status);
+  // Reported as a positive magnitude despite the negative reading.
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.60f, sup.strokePeakA());
+}
+
 // 18. The plant itself behaves, so a failing motion test means the supervisor.
 void test_plant_model_self_check() {
   Plant plant(kPlant);

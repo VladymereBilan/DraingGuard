@@ -385,6 +385,14 @@ void loop() {
     const dg::MotionOutput mo = g_sup.tick(mi);
     g_motor.apply(mo.cmd);
 
+    // A raise stroke just ended: report the peak running current so I_RUN_A can
+    // be calibrated from real strokes on the bench (D64). The peak excludes the
+    // inrush window, so it reflects running load rather than the start-up surge.
+    if (g_lastCmd == dg::MotorCmd::RAISE && mo.cmd != dg::MotorCmd::RAISE) {
+      Serial.printf("#CUR,peak_raise_A=%.3f\r\n",
+                    static_cast<double>(g_sup.strokePeakA()));
+    }
+
     g_lastCmd = mo.cmd;
     g_lastStatus = mo.status;
     g_lastRetries = mo.retriesUsed;

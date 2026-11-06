@@ -1,5 +1,7 @@
 #include "dg_motion.h"
 
+#include <cmath>
+
 namespace dg {
 
 bool isTerminal(MotionStatus s) {
@@ -25,6 +27,7 @@ MotionSupervisor::MotionSupervisor(const MotionParams& params)
       motorStartMs_(0),
       jamActive_(false),
       jamSinceMs_(0),
+      strokePeakA_(0.0f),
       retries_(0) {}
 
 float MotionSupervisor::jamThresholdA() const {
@@ -66,6 +69,7 @@ void MotionSupervisor::startStroke(MotorCmd dir, Phase next, uint32_t nowMs) {
   motorStartMs_ = nowMs;
   jamActive_ = false;
   jamSinceMs_ = 0;
+  strokePeakA_ = 0.0f; // peak is per stroke, so a retry measures itself
 }
 
 void MotionSupervisor::requestDirection(MotorCmd dir, Phase next,
@@ -109,7 +113,20 @@ bool MotionSupervisor::jamHeld(const MotionInput& in) {
     jamActive_ = false; // inrush window: current says nothing yet
     return false;
   }
-  if (in.currentA < jamThresholdA()) {
+
+  // Magnitude, not the signed reading: an ACS712 fitted the other way round
+  // reports a negative current, and comparing the signed value would then make
+  // every jam invisible instead of merely mis-signed (D64).
+  const float magnitude = std::fabs(in.currentA);
+
+  // Peak since this stroke started, for calibrating I_RUN_A on the bench.
+  // Sampled after the blanking window so it reflects running current, not the
+  // start-up surge.
+  if (magnitude > strokePeakA_) {
+    strokePeakA_ = magnitude;
+  }
+
+  if (magnitude < jamThresholdA()) {
     jamActive_ = false;
     return false;
   }
@@ -247,6 +264,7 @@ void MotionSupervisor::reset() {
   motorStartMs_ = 0;
   jamActive_ = false;
   jamSinceMs_ = 0;
+  strokePeakA_ = 0.0f;
   retries_ = 0;
 }
 

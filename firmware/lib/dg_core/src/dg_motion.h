@@ -102,6 +102,11 @@ public:
   // Current level that counts as a jam: max(iRun * factor, iRun + minDelta).
   float jamThresholdA() const;
 
+  // Largest |current| seen since the present stroke started, measured after
+  // the inrush window so it reflects running current. Zero until a stroke
+  // has run past blanking. Useful for calibrating I_RUN_A (D64).
+  float strokePeakA() const { return strokePeakA_; }
+
   void reset();
 
 private:
@@ -135,6 +140,7 @@ private:
 
   bool jamActive_;
   uint32_t jamSinceMs_;
+  float strokePeakA_;
 
   uint8_t retries_;
 };

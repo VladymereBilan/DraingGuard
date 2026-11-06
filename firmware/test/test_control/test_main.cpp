@@ -35,6 +35,9 @@ int main(int argc, char **argv) {
   RUN_TEST(dgtest::test_both_switches_fail_immediately);
   RUN_TEST(dgtest::test_stop_job_while_busy);
   RUN_TEST(dgtest::test_plant_model_self_check);
+  RUN_TEST(dgtest::test_negative_jam_current_detected);
+  RUN_TEST(dgtest::test_negative_inrush_spike_ignored);
+  RUN_TEST(dgtest::test_stroke_peak_tracks_magnitude);
 
   // HoldButton
   RUN_TEST(dgtest::test_button_short_press);

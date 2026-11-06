@@ -21,6 +21,9 @@ void test_sweep_from_end_skips_lower();
 void test_both_switches_fail_immediately();
 void test_stop_job_while_busy();
 void test_plant_model_self_check();
+void test_negative_jam_current_detected();
+void test_negative_inrush_spike_ignored();
+void test_stroke_peak_tracks_magnitude();
 
 } // namespace dgtest
 
