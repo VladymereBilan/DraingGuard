@@ -211,9 +211,26 @@ void pollSerialCommand() {
 }
 #endif
 
+// A level the sensors could not measure prints as "nan", never as the filter's
+// frozen value dressed up as a reading (D62).
+void formatLevel(char* out, size_t cap, float v, bool valid) {
+  if (valid) {
+    snprintf(out, cap, "%.2f", static_cast<double>(v));
+  } else {
+    snprintf(out, cap, "nan");
+  }
+}
+
 void printRecord(const dg::Record& r) {
-  Serial.printf("#REC,%lu,%.2f,%.2f,%.2f,%u,%u,%u,%u\r\n",
-                static_cast<unsigned long>(r.ms), r.uCm, r.dCm, r.diffCm,
+  char u[12];
+  char d[12];
+  char diff[12];
+  formatLevel(u, sizeof(u), r.uCm, r.uValid);
+  formatLevel(d, sizeof(d), r.dCm, r.dValid);
+  formatLevel(diff, sizeof(diff), r.diffCm, r.uValid && r.dValid);
+
+  Serial.printf("#REC,%lu,%s,%s,%s,%u,%u,%u,%u\r\n",
+                static_cast<unsigned long>(r.ms), u, d, diff,
                 static_cast<unsigned>(r.state), static_cast<unsigned>(r.cycles),
                 static_cast<unsigned>(r.fault), static_cast<unsigned>(r.event));
 }
@@ -384,9 +401,15 @@ void loop() {
     // One CSV line per control tick (D45). Timed separately so the #STAT
     // breakdown shows whether serial or control logic is costing the time.
     const uint32_t serialStartUs = micros();
-    Serial.printf("%lu,%.2f,%.2f,%.2f,%u,%.3f\r\n",
-                  static_cast<unsigned long>(nowMs), ci.upstreamCm,
-                  ci.downstreamCm, ci.upstreamCm - ci.downstreamCm,
+    char uTxt[12];
+    char dTxt[12];
+    char diffTxt[12];
+    formatLevel(uTxt, sizeof(uTxt), ci.upstreamCm, ci.upstreamValid);
+    formatLevel(dTxt, sizeof(dTxt), ci.downstreamCm, ci.downstreamValid);
+    formatLevel(diffTxt, sizeof(diffTxt), ci.upstreamCm - ci.downstreamCm,
+                ci.upstreamValid && ci.downstreamValid);
+    Serial.printf("%lu,%s,%s,%s,%u,%.3f\r\n",
+                  static_cast<unsigned long>(nowMs), uTxt, dTxt, diffTxt,
                   static_cast<unsigned>(g_ctrl.state()), g_current.amps());
     if (co.hasRecord) {
       printRecord(co.record);

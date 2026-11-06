@@ -31,6 +31,7 @@ void test_c25_fault5_auto_recovers();
 void test_c26_led_table();
 void test_c27_fault_stops_motor();
 void test_c28_record_contents();
+void test_c29_records_carry_sensor_validity();
 
 } // namespace dgtest
 

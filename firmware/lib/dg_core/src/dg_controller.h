@@ -52,6 +52,11 @@ enum class State : uint8_t {
 
 // One log line. Fields map onto ThingSpeak 1-7; `cycles` is field 5 and carries
 // cyclesSinceEmptied, not the per-blockage cycle count (D35).
+//
+// uValid/dValid say whether the two levels are real measurements or the filter's
+// frozen last value (D41). A level that is not valid must never be uploaded as
+// if it were data (D62): the upload builders leave the field out entirely, and
+// the serial log prints "nan".
 struct Record {
   uint32_t ms;
   float uCm;
@@ -61,6 +66,8 @@ struct Record {
   uint16_t cycles;
   uint8_t fault;
   uint8_t event;
+  bool uValid;
+  bool dValid;
 };
 
 struct ControllerParams {

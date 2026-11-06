@@ -67,7 +67,8 @@ void encodeSlot(const StoredRecord& in, uint8_t out[kSlotBytes]) {
 
   put16(out + 0, kSlotMagic);
   out[2] = kSlotVersion;
-  out[3] = 0; // flags, reserved
+  out[3] = static_cast<uint8_t>((in.rec.uValid ? kFlagUValid : 0) |
+                                (in.rec.dValid ? kFlagDValid : 0));
   put32(out + 4, in.seq);
   put32(out + 8, in.uptimeMs);
   put32(out + 12, in.epoch);
@@ -105,6 +106,8 @@ bool decodeSlot(const uint8_t in[kSlotBytes], StoredRecord& out) {
   out.rec.state = in[28];
   out.rec.fault = in[29];
   out.rec.event = in[30];
+  out.rec.uValid = (in[3] & kFlagUValid) != 0;
+  out.rec.dValid = (in[3] & kFlagDValid) != 0;
   return true;
 }
 

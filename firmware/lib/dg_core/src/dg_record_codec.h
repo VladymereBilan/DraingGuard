@@ -8,8 +8,8 @@
 //
 // Layout:
 //    0  2  magic 0xD6A1
-//    2  1  version = 1
-//    3  1  flags (reserved, 0)
+//    2  1  version = 2
+//    3  1  flags: bit0 uValid, bit1 dValid, rest reserved (0)
 //    4  4  seq        monotonic, assigned on append; 0 means never written
 //    8  4  uptimeMs   millis() when the record was made
 //   12  4  epoch      UTC seconds, 0 = not known yet (D8)
@@ -36,7 +36,13 @@ namespace dg {
 
 inline constexpr uint16_t kSlotBytes = 32;
 inline constexpr uint16_t kSlotMagic = 0xD6A1;
-inline constexpr uint8_t kSlotVersion = 1;
+// Version 2 added the validity flags. A version-1 slot is rejected rather than
+// reinterpreted, because its flags byte was always zero and would decode as
+// "both sensors invalid" - a silent lie about data we cannot verify.
+inline constexpr uint8_t kSlotVersion = 2;
+
+inline constexpr uint8_t kFlagUValid = 0x01;
+inline constexpr uint8_t kFlagDValid = 0x02;
 
 // A Record plus the provenance D8 requires to date it later.
 struct StoredRecord {

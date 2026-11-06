@@ -788,4 +788,42 @@ void test_c28_record_contents() {
   TEST_ASSERT_TRUE(sawBin);
 }
 
+// C29 ----------------------------------------------------------------------
+void test_c29_records_carry_sensor_validity() {
+  ControlHarness h(kMotion, kCtrl, kPlant, kDeadtime);
+  bootToMonitoring(h);
+
+  // Both sensors healthy: records say so.
+  TEST_ASSERT_TRUE(h.runUntilRecord(cfg::SNAPSHOT_MS + 2000));
+  TEST_ASSERT_TRUE(h.lastRecord().uValid);
+  TEST_ASSERT_TRUE(h.lastRecord().dValid);
+
+  // Kill the upstream sensor. Every record from here must flag it, so the
+  // frozen level is never uploaded as a measurement (D62).
+  h.setSensorsValid(false, true);
+  TEST_ASSERT_TRUE(h.runUntilRecord(cfg::SNAPSHOT_MS + 2000));
+  TEST_ASSERT_FALSE(h.lastRecord().uValid);
+  TEST_ASSERT_TRUE(h.lastRecord().dValid);
+
+  // Kill both.
+  h.setSensorsValid(false, false);
+  TEST_ASSERT_TRUE(h.runUntilRecord(cfg::SNAPSHOT_MS + 2000));
+  TEST_ASSERT_FALSE(h.lastRecord().uValid);
+  TEST_ASSERT_FALSE(h.lastRecord().dValid);
+
+  // The fault record raised when the dropout passes SENSOR_FAULT_MS is itself
+  // flagged, because the levels behind it are still untrustworthy.
+  TEST_ASSERT_TRUE(h.runUntilEvent(cfg::EVENT_FAULT, cfg::SENSOR_FAULT_MS));
+  TEST_ASSERT_EQUAL_UINT8(cfg::FAULT_SENSOR, h.lastRecord().fault);
+  TEST_ASSERT_FALSE(h.lastRecord().uValid);
+  TEST_ASSERT_FALSE(h.lastRecord().dValid);
+
+  // Sensors return: records go back to reporting real data.
+  h.setSensorsValid(true, true);
+  h.clearRecords();
+  TEST_ASSERT_TRUE(h.runUntilRecord(cfg::SNAPSHOT_MS + 2000));
+  TEST_ASSERT_TRUE(h.lastRecord().uValid);
+  TEST_ASSERT_TRUE(h.lastRecord().dValid);
+}
+
 } // namespace dgtest

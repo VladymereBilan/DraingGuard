@@ -33,7 +33,8 @@ char g_bulkBuf[kBulkBufBytes];
 
 dg::StoredRecord makeRec(uint16_t bootId, uint32_t uptimeMs, uint32_t epoch,
                          uint8_t state, uint8_t event, uint16_t cycles,
-                         float uCm, float dCm, uint8_t fault = 0) {
+                         float uCm, float dCm, uint8_t fault = 0,
+                         bool uValid = true, bool dValid = true) {
   dg::StoredRecord r{};
   r.seq = 0; // assigned by Ring::append
   r.uptimeMs = uptimeMs;
@@ -47,6 +48,8 @@ dg::StoredRecord makeRec(uint16_t bootId, uint32_t uptimeMs, uint32_t epoch,
   r.rec.cycles = cycles;
   r.rec.fault = fault;
   r.rec.event = event;
+  r.rec.uValid = uValid;
+  r.rec.dValid = dValid;
   return r;
 }
 
@@ -154,6 +157,8 @@ void test_l1_slot_round_trip() {
   TEST_ASSERT_EQUAL_FLOAT(in.rec.dCm, out.rec.dCm);
   // diffCm is derived on decode, not stored.
   TEST_ASSERT_EQUAL_FLOAT(in.rec.uCm - in.rec.dCm, out.rec.diffCm);
+  TEST_ASSERT_EQUAL(in.rec.uValid, out.rec.uValid);
+  TEST_ASSERT_EQUAL(in.rec.dValid, out.rec.dValid);
   TEST_ASSERT_FALSE(dg::slotIsBlank(slot));
 }
 
@@ -782,6 +787,135 @@ void test_l26_partial_ack_leaves_only_unacked() {
     TEST_ASSERT_EQUAL_UINT32((n + 3) * 100u, r.uptimeMs);
   }
   TEST_ASSERT_FALSE(reborn.readAt(4, r));
+}
+
+// 27 -----------------------------------------------------------------------
+void test_l27_codec_round_trips_validity_flags() {
+  // All four combinations survive the 32-byte slot in the flags byte.
+  const bool combos[4][2] = {{true, true}, {true, false}, {false, true},
+                             {false, false}};
+  for (uint8_t i = 0; i < 4; ++i) {
+    dg::StoredRecord in =
+        makeRec(1, 1000u + i, kBaseEpoch, 0, dg::kEventSnapshot, i, 13.0f,
+                10.0f, dg::kFaultNone, combos[i][0], combos[i][1]);
+    in.seq = i + 1u;
+
+    uint8_t slot[dg::kSlotBytes];
+    dg::encodeSlot(in, slot);
+
+    dg::StoredRecord out{};
+    TEST_ASSERT_TRUE(dg::decodeSlot(slot, out));
+    TEST_ASSERT_EQUAL(combos[i][0], out.rec.uValid);
+    TEST_ASSERT_EQUAL(combos[i][1], out.rec.dValid);
+    // The flags share the byte with nothing else, and the slot stays 32 bytes.
+    TEST_ASSERT_EQUAL_UINT16(32, dg::kSlotBytes);
+  }
+
+  // A version-1 slot is rejected rather than read as "both invalid".
+  dg::StoredRecord in = makeRec(1, 1000, kBaseEpoch, 0, dg::kEventSnapshot, 0,
+                                13.0f, 10.0f);
+  uint8_t slot[dg::kSlotBytes];
+  dg::encodeSlot(in, slot);
+  slot[2] = 1; // pretend it was written by the previous firmware
+  slot[31] = dg::crc8(slot, dg::kSlotBytes - 1);
+  dg::StoredRecord out{};
+  TEST_ASSERT_FALSE(dg::decodeSlot(slot, out));
+}
+
+// 28 -----------------------------------------------------------------------
+void test_l28_update_body_omits_invalid_fields() {
+  char body[256];
+
+  // Upstream invalid: field1 and field3 must be absent, field2 present.
+  {
+    const dg::StoredRecord r =
+        makeRec(1, 1000, kBaseEpoch, 0, dg::kEventSnapshot, 0, 13.0f, 10.0f,
+                dg::kFaultNone, /*uValid=*/false, /*dValid=*/true);
+    TEST_ASSERT_TRUE(dg::buildUpdateBody(body, sizeof(body), kWriteKey, r, 0) >
+                     0);
+    TEST_ASSERT_EQUAL_UINT16(0, countOccurrences(body, "field1"));
+    TEST_ASSERT_EQUAL_UINT16(1, countOccurrences(body, "&field2=10.00"));
+    TEST_ASSERT_EQUAL_UINT16(0, countOccurrences(body, "field3"));
+    TEST_ASSERT_EQUAL_UINT16(1, countOccurrences(body, "&field4="));
+    TEST_ASSERT_EQUAL_UINT16(1, countOccurrences(body, "&field8="));
+  }
+
+  // Downstream invalid: field2 and field3 absent, field1 present.
+  {
+    const dg::StoredRecord r =
+        makeRec(1, 1000, kBaseEpoch, 0, dg::kEventSnapshot, 0, 13.0f, 10.0f,
+                dg::kFaultNone, /*uValid=*/true, /*dValid=*/false);
+    TEST_ASSERT_TRUE(dg::buildUpdateBody(body, sizeof(body), kWriteKey, r, 0) >
+                     0);
+    TEST_ASSERT_EQUAL_UINT16(1, countOccurrences(body, "&field1=13.00"));
+    TEST_ASSERT_EQUAL_UINT16(0, countOccurrences(body, "field2"));
+    TEST_ASSERT_EQUAL_UINT16(0, countOccurrences(body, "field3"));
+  }
+
+  // Both invalid: no level fields at all, but the record still goes up so the
+  // state, fault, event and dropped count are not lost.
+  {
+    const dg::StoredRecord r =
+        makeRec(1, 1000, kBaseEpoch, 4, dg::kEventFault, 0, 13.0f, 10.0f,
+                dg::kFaultSensor, /*uValid=*/false, /*dValid=*/false);
+    TEST_ASSERT_TRUE(dg::buildUpdateBody(body, sizeof(body), kWriteKey, r, 3) >
+                     0);
+    TEST_ASSERT_EQUAL_UINT16(0, countOccurrences(body, "field1"));
+    TEST_ASSERT_EQUAL_UINT16(0, countOccurrences(body, "field2"));
+    TEST_ASSERT_EQUAL_UINT16(0, countOccurrences(body, "field3"));
+    TEST_ASSERT_EQUAL_UINT16(1, countOccurrences(body, "&field4=4"));
+    TEST_ASSERT_EQUAL_UINT16(1, countOccurrences(body, "&field6=5"));
+    TEST_ASSERT_EQUAL_UINT16(1, countOccurrences(body, "&field7=2"));
+    TEST_ASSERT_EQUAL_UINT16(1, countOccurrences(body, "&field8=3"));
+  }
+
+  // Both valid: all three present, as before.
+  {
+    const dg::StoredRecord r = makeRec(1, 1000, kBaseEpoch, 0,
+                                       dg::kEventSnapshot, 0, 13.0f, 10.0f);
+    TEST_ASSERT_TRUE(dg::buildUpdateBody(body, sizeof(body), kWriteKey, r, 0) >
+                     0);
+    TEST_ASSERT_EQUAL_UINT16(1, countOccurrences(body, "&field1=13.00"));
+    TEST_ASSERT_EQUAL_UINT16(1, countOccurrences(body, "&field2=10.00"));
+    TEST_ASSERT_EQUAL_UINT16(1, countOccurrences(body, "&field3=3.00"));
+  }
+}
+
+// 29 -----------------------------------------------------------------------
+void test_l29_bulk_body_omits_invalid_fields() {
+  dg::BulkBuilder b(g_bulkBuf, kBulkBufBytes, kWriteKey);
+
+  // One of each: both valid, upstream dead, downstream dead, both dead.
+  TEST_ASSERT_TRUE(b.addEntry(
+      makeRec(1, 1000, kBaseEpoch, 0, dg::kEventSnapshot, 0, 13.0f, 10.0f), 0));
+  TEST_ASSERT_TRUE(b.addEntry(
+      makeRec(1, 2000, kBaseEpoch + 20, 0, dg::kEventSnapshot, 0, 13.0f, 10.0f,
+              dg::kFaultNone, false, true),
+      0));
+  TEST_ASSERT_TRUE(b.addEntry(
+      makeRec(1, 3000, kBaseEpoch + 40, 0, dg::kEventSnapshot, 0, 13.0f, 10.0f,
+              dg::kFaultNone, true, false),
+      0));
+  TEST_ASSERT_TRUE(b.addEntry(
+      makeRec(1, 4000, kBaseEpoch + 60, 0, dg::kEventSnapshot, 0, 13.0f, 10.0f,
+              dg::kFaultNone, false, false),
+      0));
+  TEST_ASSERT_TRUE(b.finish());
+
+  TEST_ASSERT_EQUAL_UINT16(4, b.entries());
+  assertValidBulk(b.body(), 4);
+
+  // field1 appears twice (entries 1 and 3), field2 twice (1 and 2), field3 once
+  // (entry 1 only - it needs both levels). field4..8 appear on all four.
+  TEST_ASSERT_EQUAL_UINT16(2, countOccurrences(b.body(), "\"field1\""));
+  TEST_ASSERT_EQUAL_UINT16(2, countOccurrences(b.body(), "\"field2\""));
+  TEST_ASSERT_EQUAL_UINT16(1, countOccurrences(b.body(), "\"field3\""));
+  TEST_ASSERT_EQUAL_UINT16(4, countOccurrences(b.body(), "\"field4\""));
+  TEST_ASSERT_EQUAL_UINT16(4, countOccurrences(b.body(), "\"field8\""));
+
+  // No empty value or dangling comma was left where a field was skipped.
+  TEST_ASSERT_EQUAL_UINT16(0, countOccurrences(b.body(), "\":,"));
+  TEST_ASSERT_EQUAL_UINT16(0, countOccurrences(b.body(), ":}"));
 }
 
 } // namespace dgtest

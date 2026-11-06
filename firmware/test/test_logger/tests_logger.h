@@ -43,6 +43,11 @@ void test_l24_dropped_accounting();
 void test_l25_ack_not_resurfaced_after_reboot();
 void test_l26_partial_ack_leaves_only_unacked();
 
+// Sensor validity never uploaded as data (D62)
+void test_l27_codec_round_trips_validity_flags();
+void test_l28_update_body_omits_invalid_fields();
+void test_l29_bulk_body_omits_invalid_fields();
+
 } // namespace dgtest
 
 #endif // DG_TESTS_LOGGER_H

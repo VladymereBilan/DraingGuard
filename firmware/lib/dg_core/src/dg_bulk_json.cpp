@@ -86,15 +86,29 @@ private:
 };
 
 // field4..field7 and field8 are small integers; field1..field3 are levels.
+//
+// A level the sensors could not actually measure is omitted rather than sent
+// (D62). ThingSpeak treats a missing field as "no reading", which is the truth;
+// sending the filter's frozen value would publish a fabricated water level.
+// field3 needs both levels, so it goes whenever either one is missing.
 void putFields(Writer& w, const StoredRecord& r, uint32_t droppedTotal,
                bool json) {
+  const bool u = r.rec.uValid;
+  const bool d = r.rec.dValid;
+
   if (json) {
-    w.putStr(",\"field1\":");
-    w.putFixed2(r.rec.uCm);
-    w.putStr(",\"field2\":");
-    w.putFixed2(r.rec.dCm);
-    w.putStr(",\"field3\":");
-    w.putFixed2(r.rec.diffCm);
+    if (u) {
+      w.putStr(",\"field1\":");
+      w.putFixed2(r.rec.uCm);
+    }
+    if (d) {
+      w.putStr(",\"field2\":");
+      w.putFixed2(r.rec.dCm);
+    }
+    if (u && d) {
+      w.putStr(",\"field3\":");
+      w.putFixed2(r.rec.diffCm);
+    }
     w.putStr(",\"field4\":");
     w.putUint(r.rec.state);
     w.putStr(",\"field5\":");
@@ -106,12 +120,18 @@ void putFields(Writer& w, const StoredRecord& r, uint32_t droppedTotal,
     w.putStr(",\"field8\":");
     w.putUint(droppedTotal);
   } else {
-    w.putStr("&field1=");
-    w.putFixed2(r.rec.uCm);
-    w.putStr("&field2=");
-    w.putFixed2(r.rec.dCm);
-    w.putStr("&field3=");
-    w.putFixed2(r.rec.diffCm);
+    if (u) {
+      w.putStr("&field1=");
+      w.putFixed2(r.rec.uCm);
+    }
+    if (d) {
+      w.putStr("&field2=");
+      w.putFixed2(r.rec.dCm);
+    }
+    if (u && d) {
+      w.putStr("&field3=");
+      w.putFixed2(r.rec.diffCm);
+    }
     w.putStr("&field4=");
     w.putUint(r.rec.state);
     w.putStr("&field5=");

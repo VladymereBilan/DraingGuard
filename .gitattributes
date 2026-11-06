@@ -1,0 +1,15 @@
+# Normalise line endings so editing on two Windows machines (and the odd
+# scripted edit) cannot produce whole-file diffs that are nothing but CRLF.
+* text=auto eol=lf
+
+# Windows batch files must keep CRLF or cmd.exe mis-parses them.
+*.bat eol=crlf
+*.cmd eol=crlf
+
+# Binary, never touched.
+*.bin binary
+*.elf binary
+*.png binary
+*.jpg binary
+*.apk binary
+*.aab binary

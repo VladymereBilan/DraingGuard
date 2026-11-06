@@ -94,6 +94,10 @@ Record Controller::buildRecord(uint8_t event, const ControllerInput& in) const {
   r.cycles = cyclesSinceEmptied_;
   r.fault = faultCode_;
   r.event = event;
+  // Carried through so nothing downstream mistakes a frozen value for a
+  // measurement (D62).
+  r.uValid = in.upstreamValid;
+  r.dValid = in.downstreamValid;
   return r;
 }
 

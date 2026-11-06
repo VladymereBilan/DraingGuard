@@ -55,5 +55,10 @@ int main(int argc, char **argv) {
   RUN_TEST(dgtest::test_l25_ack_not_resurfaced_after_reboot);
   RUN_TEST(dgtest::test_l26_partial_ack_leaves_only_unacked);
 
+  // Sensor validity (D62)
+  RUN_TEST(dgtest::test_l27_codec_round_trips_validity_flags);
+  RUN_TEST(dgtest::test_l28_update_body_omits_invalid_fields);
+  RUN_TEST(dgtest::test_l29_bulk_body_omits_invalid_fields);
+
   return UNITY_END();
 }
