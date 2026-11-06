@@ -20,7 +20,7 @@ and logging are not implemented yet.
 firmware/        PlatformIO project (run all pio commands from here)
   platformio.ini three environments: esp32, wokwi, native
   include/       config.h (all tunables), secrets.example.h
-  src/           hardware-facing code (needs Arduino.h)
+  src/           hardware-facing code (needs Arduino.h); net_config.h holds credentials
   lib/dg_core/   pure logic, compiles without Arduino.h, unit-tested natively
   test/          Unity tests, run on the native environment
   diagram.json   Wokwi circuit for the current firmware

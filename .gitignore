@@ -5,6 +5,10 @@
 .vscode/*
 !.vscode/extensions.json
 
+# PlatformIO regenerates firmware/.vscode on every build and fills
+# c_cpp_properties.json with absolute paths for this machine only.
+firmware/.vscode/
+
 # Local credentials, never committed
 firmware/include/secrets.h
 .env

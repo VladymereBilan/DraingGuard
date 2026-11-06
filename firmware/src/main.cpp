@@ -10,13 +10,8 @@
 
 #include <Arduino.h>
 
-#if __has_include("secrets.h")
-#include "secrets.h"
-#else
-#error "Copy include/secrets.example.h to include/secrets.h and fill it in"
-#endif
-
 #include "config.h"
+#include "net_config.h" // credentials; also enforces that secrets.h exists
 
 namespace {
 
