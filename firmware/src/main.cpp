@@ -206,6 +206,20 @@ void setup() {
 
   // The motor is stopped here, which is the only time the zero is meaningful.
   g_current.begin();
+
+#ifdef DG_WOKWI
+  // Both ADC paths for the current pin, once. Wokwi has no eFuse calibration
+  // data, so mv_cal sticks at the raw-zero value while mv_scaled tracks the
+  // pot - which is why the simulator build scales analogRead() instead (D59).
+  {
+    const uint16_t raw = hal::CurrentSense::rawReading();
+    Serial.printf("#DBG,adc,raw=%u,mv_cal=%u,mv_scaled=%u\r\n",
+                  static_cast<unsigned>(raw),
+                  static_cast<unsigned>(hal::CurrentSense::calibratedMv()),
+                  static_cast<unsigned>(hal::CurrentSense::scaledMv(raw)));
+  }
+#endif
+
   if (g_current.zeroSubstituted()) {
     Serial.printf(
         "#WARN,acs_zero_out_of_range,measured_mV=%u,using_mV=%u\r\n",

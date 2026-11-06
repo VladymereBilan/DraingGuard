@@ -12,7 +12,36 @@ constexpr uint16_t kNominalZeroMv = 1667;
 // Millivolts at the ADC pin per amp through the sensor.
 constexpr float kMvPerAmp = 1000.0f * cfg::ACS_SENS_V_PER_A;
 
+// 12-bit ADC against the 3.3 V rail, for the uncalibrated conversion.
+constexpr uint16_t kAdcFullScale = 4095;
+constexpr uint32_t kAdcRefMv = 3300;
+
 } // namespace
+
+uint16_t CurrentSense::rawReading() {
+  return static_cast<uint16_t>(analogRead(cfg::ACS712));
+}
+
+uint16_t CurrentSense::calibratedMv() {
+  return static_cast<uint16_t>(analogReadMilliVolts(cfg::ACS712));
+}
+
+uint16_t CurrentSense::scaledMv(uint16_t raw) {
+  return static_cast<uint16_t>((static_cast<uint32_t>(raw) * kAdcRefMv) /
+                               kAdcFullScale);
+}
+
+uint16_t CurrentSense::readMv() {
+#ifdef DG_WOKWI
+  // Wokwi has no eFuse ADC calibration data, so analogReadMilliVolts() returns
+  // the raw-zero value (~142 mV) no matter what the pin sees. analogRead()
+  // tracks the input correctly, so scale that instead (D59). Real hardware
+  // keeps the calibrated path, which corrects the ADC's known non-linearity.
+  return scaledMv(rawReading());
+#else
+  return calibratedMv();
+#endif
+}
 
 CurrentSense::CurrentSense()
     : window_{},
@@ -47,7 +76,9 @@ void CurrentSense::recompute() {
 }
 
 void CurrentSense::begin() {
-  // ADC1 channel, input only. 11 dB attenuation covers the full 0-3.3 V span.
+  // ADC1 channel, input only. 11 dB attenuation covers the full 0-3.3 V span,
+  // and 12-bit resolution is what the uncalibrated scaling assumes.
+  analogReadResolution(12);
   analogSetPinAttenuation(cfg::ACS712, ADC_11db);
 
   head_ = 0;
@@ -59,7 +90,7 @@ void CurrentSense::begin() {
 
   // One full burst, so the zero is trustworthy and the window starts primed.
   for (uint16_t i = 0; i < kWindow; ++i) {
-    pushSample(static_cast<uint16_t>(analogReadMilliVolts(cfg::ACS712)));
+    pushSample(readMv());
   }
 
   measuredZeroMv_ = static_cast<uint16_t>(sum_ / kWindow);
@@ -76,7 +107,7 @@ void CurrentSense::begin() {
 
 void CurrentSense::sample() {
   for (uint16_t i = 0; i < kPerTick; ++i) {
-    pushSample(static_cast<uint16_t>(analogReadMilliVolts(cfg::ACS712)));
+    pushSample(readMv());
   }
   recompute();
 }

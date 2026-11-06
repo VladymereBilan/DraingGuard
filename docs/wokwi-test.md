@@ -227,10 +227,15 @@ This is the one test where you touch the potentiometer.
 
 1. Drag the **"up"** slider down to **27 cm** and wait 10 s for **state 2 (CLEARING)**.
 2. Watch the LEDs. Wait until the **white LED (IN2 RAISE)** comes on — that is the rake
-   *raising*, which is the only stroke where current is used to detect a jam.
-3. **While the white LED is on, turn the potentiometer UP a little** (even a small nudge is
-   plenty — the jam threshold is only 0.8 A).
-4. Watch `current_A` in the Serial Monitor climb above **0.800**.
+   *raising*, which is the only stroke where current is used to detect a jam. On the
+   down stroke the firmware ignores current entirely, so turning the pot then does
+   nothing.
+3. **While the white LED is on, turn the potentiometer slightly CLOCKWISE** — about
+   **+100 mV above centre**, which is roughly 3 % of the knob's travel. That is 0.8 A,
+   the jam threshold (`max(1.5 × 0.5 A, 0.5 A + 0.3 A)`), because the scale is
+   ~123 mV per amp.
+4. Watch `current_A` in the Serial Monitor climb above **0.800**. A bigger turn is fine —
+   anything over the threshold counts as a jam.
 5. After about half a second, **turn the pot back to the middle** — you have simulated the
    obstruction coming loose.
 6. Drag the **"up"** slider back to **30 cm** and wait.

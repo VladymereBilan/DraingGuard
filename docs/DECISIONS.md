@@ -58,3 +58,5 @@ D55 Network policy constants (Wi-Fi backoff 1->30 s, NTP resync 1 h, logger stac
 D56 Loop scheduling is fixed-rate (next += period; resync if more than one period behind). Target: loop_max_us < 5000.
 D57 ACS712 64-sample average is gathered 8 samples per 10 ms tick into a rolling 64-entry window (~80 ms).
 D58 Secret values (Wi-Fi password, write keys) are never printed to Serial, plans, logs or reports; use placeholders like <WRITE_KEY>.
+D59 In the Wokwi build the current reading uses analogRead() scaled to mV; the real build keeps analogReadMilliVolts. Root cause: Wokwi supplies no eFuse ADC calibration, so analogReadMilliVolts returns the raw-zero value (~142 mV) regardless of the input.
+D60 loop_max_us target relaxed to < 10 ms in Wokwi; re-measure on the real ESP32 before freeze.

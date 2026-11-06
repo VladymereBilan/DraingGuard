@@ -47,7 +47,17 @@ public:
   bool zeroSubstituted() const { return zeroSubstituted_; }
   uint16_t measuredZeroMv() const { return measuredZeroMv_; }
 
+  // Both ADC paths for one pin, for the boot diagnostic line. Wokwi does not
+  // supply the eFuse calibration analogReadMilliVolts() needs, so the two
+  // disagree there and agree on real silicon (D59).
+  static uint16_t rawReading();
+  static uint16_t calibratedMv();
+  static uint16_t scaledMv(uint16_t raw);
+
 private:
+  // The millivolt source this build uses.
+  static uint16_t readMv();
+
   void pushSample(uint16_t mv);
   void recompute();
 
