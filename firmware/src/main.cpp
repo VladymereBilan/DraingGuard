@@ -64,8 +64,10 @@ void setup() {
 
   // One '#'-prefixed banner line, then the CSV header. Downstream tools skip
   // '#' lines and parse everything after the header as data.
-  Serial.printf("# %s %s env=%s\n", FIRMWARE_NAME, FIRMWARE_VERSION, BUILD_ENV);
-  Serial.println("ms,U_cm,D_cm,diff_cm,state,current_A");
+  // Every serial line ends CRLF. The Wokwi terminal does not treat a bare LF as a
+  // carriage return, so a "\n"-only line leaves the next one indented.
+  Serial.printf("# %s %s env=%s\r\n", FIRMWARE_NAME, FIRMWARE_VERSION, BUILD_ENV);
+  Serial.print("ms,U_cm,D_cm,diff_cm,state,current_A\r\n");
 
   g_lastHeartbeatMs = millis();
 }

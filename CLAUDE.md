@@ -3,6 +3,9 @@
 Read `docs/spec.md` and `docs/DECISIONS.md` before starting any task. The decisions log
 is authoritative: if an instruction conflicts with it, stop and ask rather than guessing.
 
+**Where `docs/DECISIONS.md` and `docs/spec.md` differ, DECISIONS wins (D30).** The spec is
+the original design document and is not rewritten as decisions supersede it.
+
 ## Firmware rules
 
 - **No blocking.** No `delay()`, no `pulseIn()`, no busy-waits anywhere in `firmware/src`

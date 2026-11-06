@@ -8,7 +8,7 @@ D5  Snapshot every 20 s in ALL states; an event record replaces the next snapsho
 D6  State codes 5=HOMING, 6=BASELINE, uploaded to field 4; paper table updated to match.
 D7  Baseline + cyclesSinceEmptied in NVS; LittleFS only for the ring buffer.
 D8  Ring records carry bootId + uptime; epoch backfilled after NTP; unsynced old-boot records dropped and counted.
-D9  ThingSpeak over plain HTTP; channel public-read; write key only on device + fake writer. [PENDING]
+D9  RESOLVED: ThingSpeak over plain HTTP; channels public-read; write keys only on device + fake writer.
 D10 Current jam detection on raise only; down uses travel timeout -> same retry path; I_run calibrated.
 D11 stop() = IN1=IN2=LOW (coast); worm gear self-locks.
 D12 Motor pins driven LOW as the first statements in setup().
@@ -24,6 +24,9 @@ D21 Each sensor pinged every 100 ms, sensors staggered 50 ms.
 D22 Default partition table (its data partition hosts LittleFS); revisit only if the logger needs more.
 D23 No PWM: ENA jumper on, direction-only drive.
 D24 config.h holds no secrets or Wi-Fi logic; that lives in src/net_config.h.
-D25 A sensor with no valid median for 10 pushes is invalid; the controller must not start clearing on invalid data.
+D25 A sensor is invalid after 10 pushes with no new median (~1.2 s for a total dropout); the controller must not start clearing on invalid data.
 D26 CLAUDE.md holds the standing rules for Claude Code sessions.
 D27 Speed of sound 0.0343 cm/us, no temperature compensation.
+D28 Channels: DrainGuard-dev = 3568459 (Wokwi + fake writer), DrainGuard = 3568466 (real hardware + trials). Firmware uses dev until the trial run.
+D29 Control split: a fast MotionSupervisor (10 ms) executes motion jobs; the Controller (200 ms) owns states and records. Final shape set by the S2 plan.
+D30 Where docs/DECISIONS.md and docs/spec.md differ, DECISIONS wins.
