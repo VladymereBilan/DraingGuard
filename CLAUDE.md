@@ -21,6 +21,10 @@ the original design document and is not rewritten as decisions supersede it.
   first statements in `setup()`.
 - **Never commit `firmware/include/secrets.h`.** It is gitignored. `src/net_config.h` is
   the only file allowed to include it; `include/config.h` holds no secrets or Wi-Fi logic.
+- **Never reveal a secret value (D58).** Wi-Fi passwords and ThingSpeak write keys must
+  never appear in Serial output, source, tests, docs, plans, commit messages or reports —
+  not even ones you read from `secrets.h`. Use placeholders such as `<WRITE_KEY>` and
+  `<WIFI_PASS>`. This is a hard rule with no exceptions.
 
 ## Building on Windows
 

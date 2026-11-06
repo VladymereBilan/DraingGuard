@@ -47,3 +47,14 @@ D44 Wokwi build only (DG_WOKWI): a simulated rake drives the limit-switch inputs
 D45 Serial: one CSV line per controller tick (200 ms) "ms,U_cm,D_cm,diff_cm,state,current_A"; each Record also prints as "#REC,ms,U,D,diff,state,cycles,fault,event"; "#STAT,..." every 10 s; all lines CRLF.
 D46 Event records carry the state the event happened in (fault records read 4), as implemented in S2b.
 D47 A limit switch counts as pressed after 2 consecutive LOW reads (20 ms).
+D48 Field 8 = cumulative dropped count, persisted in NVS (written only when changed, at most once per upload window).
+D49 created_at = ISO 8601 UTC; a colliding timestamp is bumped +1 s while building a bulk body.
+D50 Bulk flush <= 60 entries per call (8 KB static buffer); same UPLOAD_SPACING_MS as /update.
+D51 While the ring holds records, every new record goes through the ring (single ordering authority).
+D52 Records made before NTP sync wait <= 60 s in RAM, then go to the ring for later backfill.
+D53 Upload acknowledgement is persisted: NVS lastAckSeq is updated after each confirmed upload; Ring::mount skips slots with seq <= lastAckSeq so nothing is re-sent after a reboot.
+D54 Ring slot = 32 bytes with CRC-8 (no CRC-16 anywhere); LittleFS mount failure -> format and continue.
+D55 Network policy constants (Wi-Fi backoff 1->30 s, NTP resync 1 h, logger stack 6 KB) live in net_logger.cpp, not config.h; -DDG_NET_DEBUG=1 on the wokwi env only.
+D56 Loop scheduling is fixed-rate (next += period; resync if more than one period behind). Target: loop_max_us < 5000.
+D57 ACS712 64-sample average is gathered 8 samples per 10 ms tick into a rolling 64-entry window (~80 ms).
+D58 Secret values (Wi-Fi password, write keys) are never printed to Serial, plans, logs or reports; use placeholders like <WRITE_KEY>.

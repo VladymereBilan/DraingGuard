@@ -80,21 +80,24 @@ A `#REC` line ends with an **event** code:
 |---|---|---|---|---|---|---|
 | snapshot | cleared & verified | fault | fault recovered | bin emptied | baseline rejected | jam cleared by retry |
 
-### First: centre the potentiometer
+### About the potentiometer
 
-The pot stands in for the current sensor, and the firmware measures its "zero" in the
-first moment after boot. Click the potentiometer and drag it to roughly the **middle**.
+The pot stands in for the ACS712 current sensor, and the firmware measures its "zero" in
+the first moment after boot. The circuit now starts it at its **middle position**
+(`"value": "512"` in `diagram.json`), so you should not have to touch it: the
+`current_A` column reads close to **0.000** and no warning appears.
 
-If you see this at boot, it just means the pot was not centred when the firmware
-calibrated — it is harmless and expected:
+**Keep the pot centred except during test 4**, or you will trigger phantom jams.
+
+If you *do* move it before the firmware boots and then restart, you may see:
 
 ```
 #WARN,acs_zero_out_of_range,measured_mV=0,using_mV=1667
 ```
 
-The firmware falls back to the nominal zero (1667 mV). Centre the pot and the current
-column will read close to 0.000. **Keep the pot centred except during test 4**, or you
-will trigger phantom jams.
+That means the reading was outside the believable window, so the firmware fell back to
+the nominal zero of 1667 mV and carried on (no fault is raised). Re-centre the pot and
+restart the simulation to clear it.
 
 ---
 
@@ -324,9 +327,9 @@ press at all.
 
 | Symptom | Cause |
 |---|---|
-| `current_A` is a large negative number | the pot is below its boot zero — centre it |
+| `current_A` is a large negative number | the pot sits below the zero the firmware calibrated — re-centre it and restart the simulation |
 | A clearing cycle starts on its own | the "up" slider is still below 28 cm |
 | Nothing happens when you move a slider by 1 cm | the threshold is 2 cm; you need at least 3 cm of difference |
 | `state` never leaves 6 | the 30 s baseline window; wait it out |
 | `state` never leaves 5 and then goes to 4 | the rake never reached home — check the HOME button is not stuck |
-| `#STAT,4312,0,1667` | normal: worst loop time in µs, events dropped (must stay 0), current zero in mV |
+| `#STAT,a,b,c,d,e,f,g` | diagnostics: worst loop µs, then the sensors / safety-tick / control-tick / serial µs that make it up, then events dropped (must stay 0) and the current zero in mV. The first number should stay under 5000. |

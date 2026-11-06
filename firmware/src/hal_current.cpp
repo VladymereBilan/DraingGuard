@@ -2,8 +2,6 @@
 
 #include <Arduino.h>
 
-#include "config.h"
-
 namespace hal {
 namespace {
 
@@ -17,25 +15,54 @@ constexpr float kMvPerAmp = 1000.0f * cfg::ACS_SENS_V_PER_A;
 } // namespace
 
 CurrentSense::CurrentSense()
-    : zeroMv_(kNominalZeroMv),
+    : window_{},
+      head_(0),
+      filled_(0),
+      sum_(0),
+      zeroMv_(kNominalZeroMv),
       measuredZeroMv_(0),
       zeroSubstituted_(false),
       lastMv_(kNominalZeroMv),
       amps_(0.0f) {}
 
-uint16_t CurrentSense::readAveragedMv() const {
-  uint32_t sum = 0;
-  for (uint16_t i = 0; i < cfg::ACS_SAMPLES; ++i) {
-    sum += analogReadMilliVolts(cfg::ACS712);
+void CurrentSense::pushSample(uint16_t mv) {
+  // Unwritten slots hold zero, so subtracting before overwriting keeps sum_
+  // consistent whether or not the window has filled yet.
+  sum_ -= window_[head_];
+  window_[head_] = mv;
+  sum_ += mv;
+  head_ = static_cast<uint16_t>((head_ + 1) % kWindow);
+  if (filled_ < kWindow) {
+    ++filled_;
   }
-  return static_cast<uint16_t>(sum / cfg::ACS_SAMPLES);
+}
+
+void CurrentSense::recompute() {
+  if (filled_ == 0) {
+    return;
+  }
+  lastMv_ = static_cast<uint16_t>(sum_ / filled_);
+  amps_ = (static_cast<float>(lastMv_) - static_cast<float>(zeroMv_)) /
+          kMvPerAmp;
 }
 
 void CurrentSense::begin() {
   // ADC1 channel, input only. 11 dB attenuation covers the full 0-3.3 V span.
   analogSetPinAttenuation(cfg::ACS712, ADC_11db);
 
-  measuredZeroMv_ = readAveragedMv();
+  head_ = 0;
+  filled_ = 0;
+  sum_ = 0;
+  for (uint16_t i = 0; i < kWindow; ++i) {
+    window_[i] = 0;
+  }
+
+  // One full burst, so the zero is trustworthy and the window starts primed.
+  for (uint16_t i = 0; i < kWindow; ++i) {
+    pushSample(static_cast<uint16_t>(analogReadMilliVolts(cfg::ACS712)));
+  }
+
+  measuredZeroMv_ = static_cast<uint16_t>(sum_ / kWindow);
   if (measuredZeroMv_ < cfg::ACS_ZERO_MIN_MV ||
       measuredZeroMv_ > cfg::ACS_ZERO_MAX_MV) {
     zeroMv_ = kNominalZeroMv;
@@ -44,14 +71,14 @@ void CurrentSense::begin() {
     zeroMv_ = measuredZeroMv_;
     zeroSubstituted_ = false;
   }
-  lastMv_ = zeroMv_;
-  amps_ = 0.0f;
+  recompute();
 }
 
 void CurrentSense::sample() {
-  lastMv_ = readAveragedMv();
-  amps_ = (static_cast<float>(lastMv_) - static_cast<float>(zeroMv_)) /
-          kMvPerAmp;
+  for (uint16_t i = 0; i < kPerTick; ++i) {
+    pushSample(static_cast<uint16_t>(analogReadMilliVolts(cfg::ACS712)));
+  }
+  recompute();
 }
 
 } // namespace hal

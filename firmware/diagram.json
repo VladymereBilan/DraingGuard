@@ -23,7 +23,7 @@
     { "type": "wokwi-resistor", "id": "r_in2", "top": 380, "left": 340, "attrs": { "value": "220" } },
     { "type": "wokwi-led", "id": "led_in2", "top": 370, "left": 470, "attrs": { "color": "white", "label": "IN2 RAISE" } },
 
-    { "type": "wokwi-potentiometer", "id": "pot_acs", "top": -130, "left": -280, "attrs": {} },
+    { "type": "wokwi-potentiometer", "id": "pot_acs", "top": -130, "left": -280, "attrs": { "value": "512" } },
 
     { "type": "wokwi-pushbutton", "id": "btn_home", "top": 40, "left": -290, "attrs": { "label": "HOME", "color": "green" } },
     { "type": "wokwi-pushbutton", "id": "btn_end", "top": 130, "left": -290, "attrs": { "label": "END", "color": "red" } },
