@@ -34,18 +34,18 @@
     [ "esp:RX0", "$serialMonitor:TX", "", [] ],
 
     [ "esp:VIN", "up:VCC", "red", [] ],
-    [ "esp:GND.3", "up:GND", "black", [] ],
+    [ "esp:GND.2", "up:GND", "black", [] ],
     [ "esp:D18", "up:TRIG", "green", [] ],
     [ "esp:D19", "up:ECHO", "blue", [] ],
 
     [ "esp:VIN", "down:VCC", "red", [] ],
-    [ "esp:GND.3", "down:GND", "black", [] ],
+    [ "esp:GND.2", "down:GND", "black", [] ],
     [ "esp:D21", "down:TRIG", "green", [] ],
     [ "esp:D22", "down:ECHO", "blue", [] ],
 
     [ "esp:D23", "r_status:1", "limegreen", [] ],
     [ "r_status:2", "led_status:A", "limegreen", [] ],
-    [ "led_status:C", "esp:GND.3", "black", [] ],
+    [ "led_status:C", "esp:GND.1", "black", [] ],
 
     [ "esp:D13", "r_fault:1", "red", [] ],
     [ "r_fault:2", "led_fault:A", "red", [] ],

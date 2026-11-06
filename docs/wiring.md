@@ -45,6 +45,14 @@ before powering up**, or the echo pins will see 5 V.
 
 ## Simulator stand-ins
 
+**The Wokwi board has only two ground pins.** `wokwi-esp32-devkit-v1` exposes exactly
+`GND.1` and `GND.2` — there is no `GND.3`, even though the physical DOIT board has three
+grounds. A connection naming a pin the board does not have is not a warning you will see:
+it silently takes out the connections declared after it, which looks like dead sensors and
+a dead ADC. The authoritative pin list is
+[wokwi-boards/boards/esp32-devkit-v1/board.json](https://github.com/wokwi/wokwi-boards/blob/main/boards/esp32-devkit-v1/board.json);
+check new pin names against it rather than against the silkscreen.
+
 | Hardware | Wokwi stand-in |
 |---|---|
 | ACS712 current sensor | `wokwi-potentiometer` on GPIO 34 |
