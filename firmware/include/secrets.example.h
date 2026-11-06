@@ -14,7 +14,11 @@
 #define WIFI_SSID "your-wifi-ssid"
 #define WIFI_PASS "your-wifi-password"
 
-#define TS_CHANNEL_ID "000000"
+// ThingSpeak channels (D28):
+//   DrainGuard-dev  3568459   Wokwi and the fake writer - use this one for now
+//   DrainGuard      3568466   real hardware and the evaluation trials
+// Switch by editing this file; the firmware just uses TS_CHANNEL_ID.
+#define TS_CHANNEL_ID "3568459"
 #define TS_WRITE_KEY "YOURTHINGSPEAKWRITEKEY"
 
 #endif // DG_SECRETS_H

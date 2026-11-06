@@ -328,6 +328,137 @@ press at all.
 
 ---
 
+## Test 7 — Wi-Fi, ThingSpeak, and the offline buffer
+
+This is the only test that uses the network. Wokwi provides an open access point called
+`Wokwi-GUEST` and real outbound internet, so the firmware genuinely uploads to ThingSpeak.
+
+### How to type into the Wokwi serial terminal
+
+The Serial Monitor panel at the bottom accepts input. **Click inside it once** so it has
+keyboard focus — the cursor appears at the end of the output — then type the command and
+press **Enter**. You will not see your own typing echoed back; only the firmware's reply
+appears. If nothing happens, you almost certainly typed into the editor instead of the
+terminal: click the terminal and try again.
+
+Two commands exist, and only in the Wokwi build:
+
+| Command | Effect |
+|---|---|
+| `net off` | pretends Wi-Fi died — uploads stop, records pile up in flash |
+| `net on` | pretends Wi-Fi came back — the backlog is flushed |
+
+### Part A — boot and the first upload
+
+**Do:** start the simulator and watch for about 40 seconds.
+
+**Expect, in order:**
+
+```
+#NET,fs,mount,ok=1,formatted=1,slots=200,count=0,bad=0,acked=0
+#NET,boot,id=1,dropped=0,ack=0,channel=3568459
+#NET,wifi,connecting,ssid=Wokwi-GUEST
+#NET,wifi,up,ip=10.13.37.2
+#NET,ntp,ok,epoch=1793923200
+#NET,up,ok,id=1
+```
+
+| Line | What it tells you |
+|---|---|
+| `#NET,fs,mount` | LittleFS came up. `formatted=1` on the very first run is normal — there was no filesystem yet. `count=0` means the ring is empty. |
+| `#NET,boot,id=1` | boot counter. It increments every restart, so run 2 shows `id=2`. |
+| `#NET,wifi,up` | associated, with the IP Wokwi handed out |
+| `#NET,ntp,ok` | the clock is set — uploads need a real timestamp |
+| `#NET,up,ok,id=N` | ThingSpeak accepted one record and gave it entry number N |
+
+Uploads are spaced **15.5 s** apart (the free-tier limit), so you will see roughly four
+`#NET,up,ok` lines per minute, not one per snapshot.
+
+> The `#DBG,adc,...` line near the top shows both ADC paths. In Wokwi `mv_cal` sticks at
+> ~142 regardless of the knob while `mv_scaled` tracks it — that is why the simulator
+> build uses the scaled reading.
+
+### Part B — go offline and watch the ring fill
+
+**Do:**
+
+1. Click the serial terminal, type `net off`, press Enter.
+2. Wait about **2 minutes**. Do not touch anything else.
+
+**Expect:**
+
+```
+#NET,debug,net=off
+#NET,wifi,down,debug_off
+```
+
+Then — and this is the point of the test — **the CSV lines keep coming every 200 ms**. The
+control loop is completely unaffected; sensing, clearing and the LEDs carry on as normal
+because all the networking lives on the other core.
+
+After about a minute you will see:
+
+```
+#NET,pending,aged_to_ring,ring=3
+```
+
+That is the RAM buffer handing its records to flash. The `ring=` number grows by one per
+snapshot (one every 20 s), so after 2 minutes expect roughly **6–8**.
+
+Check it in the 60-second diagnostics line:
+
+```
+#NET,STAT,heap=215432,minheap=198440,stack_hw=2104,ring=7,ok=4,fail=0,drop=0
+```
+
+| Field | Meaning |
+|---|---|
+| `heap` / `minheap` | free heap now, and the worst it has ever been |
+| `stack_hw` | bytes of the logger task's 6 KB stack never used — if this ever nears 0, the stack is too small |
+| `ring` | records waiting in flash |
+| `ok` / `fail` | uploads accepted / rejected |
+| `drop` | **must stay 0** — records lost to a full queue or a full ring |
+
+### Part C — come back online and flush
+
+**Do:** type `net on` in the terminal and press Enter. Wait about 30 seconds.
+
+**Expect:**
+
+```
+#NET,debug,net=on
+#NET,wifi,connecting,ssid=Wokwi-GUEST
+#NET,wifi,up,ip=10.13.37.2
+#NET,bulk,n=7,ok,ring=0
+```
+
+**One** `#NET,bulk` line clears the whole backlog — a bulk call carries up to 60 records in
+a single request. `ring=0` means flash is empty again, and the next `#NET,STAT` confirms
+`ring=0` with `drop=0`.
+
+### Part D — check the channel
+
+Open **https://thingspeak.com/channels/3568459** in a browser.
+
+**Expect:** the Field 1/2/3 charts show your levels, and — the thing worth checking — the
+backlog entries appear at **the times they were recorded**, not the time they were
+uploaded. The gap you created with `net off` is filled in correctly and in order, with no
+duplicates and no entries out of sequence. That is what the stored timestamps are for.
+
+Click **Data Import / Export → Export** if you want the raw rows; field 8 is the dropped
+counter and should read 0 throughout.
+
+> **If `net on` produces `#NET,bulk,...,fail,code=400`:** that usually means duplicate
+> timestamps, which happens if you restarted the simulation and re-sent records the
+> channel already has. ThingSpeak rejects an entire batch on a duplicate. Clearing the
+> channel's data (Channel Settings → Clear Channel) resets it.
+>
+> **If you see `code=429`:** you uploaded too fast. The firmware spaces calls 15.5 s
+> apart, so this only appears if something else is writing to the same channel — for
+> example the fake-data writer from `tools/`.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause |
@@ -337,4 +468,8 @@ press at all.
 | Nothing happens when you move a slider by 1 cm | the threshold is 2 cm; you need at least 3 cm of difference |
 | `state` never leaves 6 | the 30 s baseline window; wait it out |
 | `state` never leaves 5 and then goes to 4 | the rake never reached home — check the HOME button is not stuck |
-| `#STAT,a,b,c,d,e,f,g` | diagnostics: worst loop µs, then the sensors / safety-tick / control-tick / serial µs that make it up, then events dropped (must stay 0) and the current zero in mV. The first number should stay under 5000. |
+| `#STAT,a,b,c,d,e,f,g` | diagnostics: worst loop µs, then the sensors / safety-tick / control-tick / serial µs that make it up, then events dropped (must stay 0) and the current zero in mV. Under 10 ms is acceptable in the simulator (D60); the real board is re-measured before freeze. |
+| `#NET,...` lines never appear | the logger task failed to start — look for `#NET,begin,fail` at boot |
+| `net off` / `net on` do nothing | the terminal does not have keyboard focus — click inside the Serial Monitor panel first |
+| `#NET,wifi,connecting` repeats forever | Wokwi's `Wokwi-GUEST` network needs the simulator to have internet access; check the Wokwi licence is active |
+| `#NET,STAT` shows `drop` climbing | records are being lost: either the queue filled (control loop far ahead of the logger) or the 200-slot ring wrapped while offline |

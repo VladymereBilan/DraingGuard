@@ -49,7 +49,7 @@ D46 Event records carry the state the event happened in (fault records read 4), 
 D47 A limit switch counts as pressed after 2 consecutive LOW reads (20 ms).
 D48 Field 8 = cumulative dropped count, persisted in NVS (written only when changed, at most once per upload window).
 D49 created_at = ISO 8601 UTC; a colliding timestamp is bumped +1 s while building a bulk body.
-D50 Bulk flush <= 60 entries per call (8 KB static buffer); same UPLOAD_SPACING_MS as /update.
+D50 Bulk flush <= 60 entries per call (10 KB static buffer; measured 8.3 KB typical / 9.5 KB worst case for 60 entries, so 8 KB was too small); same UPLOAD_SPACING_MS as /update.
 D51 While the ring holds records, every new record goes through the ring (single ordering authority).
 D52 Records made before NTP sync wait <= 60 s in RAM, then go to the ring for later backfill.
 D53 Upload acknowledgement is persisted: NVS lastAckSeq is updated after each confirmed upload; Ring::mount skips slots with seq <= lastAckSeq so nothing is re-sent after a reboot.

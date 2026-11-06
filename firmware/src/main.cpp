@@ -13,6 +13,7 @@
 //   10 ms           switches, current, button, MotionSupervisor -> motor pins
 //   200 ms          Controller -> motion jobs, LEDs, persistence, CSV line
 //   10 s            "#STAT" diagnostics line
+//   60 s            "#NET,STAT" logger diagnostics
 //
 // #STAT is a worst-case breakdown over the preceding 10 s window:
 //   #STAT,loop_max_us,sensors_max_us,safety_max_us,control_max_us,
@@ -20,7 +21,9 @@
 // The four section figures should roughly sum to loop_max_us, which tells you
 // immediately which part of a pass is costing the time. Target: under 5000 us.
 //
-// Wi-Fi, ThingSpeak and the LittleFS ring buffer are S4.
+// Wi-Fi, NTP, ThingSpeak uploads and the LittleFS ring live in net_logger on a
+// core-0 task. The control loop only ever calls g_logger.submit(), which is a
+// zero-wait queue push, so no network latency can reach the 10 ms tick.
 
 #include <Arduino.h>
 
@@ -34,10 +37,15 @@
 #include "hal_io.h"
 #include "hal_motor.h"
 #include "hal_sensors.h"
+#include "net_logger.h"
 #include "storage.h"
 
 #ifdef DG_WOKWI
 #include "sim_rake.h"
+#endif
+
+#ifdef DG_NET_DEBUG
+#include <string.h>
 #endif
 
 // ---------------------------------------------------------------------------
@@ -71,7 +79,7 @@ static_assert(dg::kEventJamRetryCleared == cfg::EVENT_JAM_RETRY_CLEARED, "");
 namespace {
 
 constexpr char kFirmwareName[] = "DrainGuard";
-constexpr char kFirmwareVersion[] = "0.4.0-s3";
+constexpr char kFirmwareVersion[] = "0.5.0-s4b";
 
 #ifdef DG_WOKWI
 constexpr char kBuildEnv[] = "WOKWI";
@@ -79,8 +87,9 @@ constexpr char kBuildEnv[] = "WOKWI";
 constexpr char kBuildEnv[] = "ESP32";
 #endif
 
-// Diagnostics cadence. Not a control tunable, so it stays out of config.h.
+// Diagnostics cadences. Not control tunables, so they stay out of config.h.
 constexpr uint32_t kStatMs = 10000;
+constexpr uint32_t kNetStatMs = 60000;
 
 constexpr dg::MotionParams kMotionParams = {
     cfg::I_RUN_A,
@@ -117,6 +126,8 @@ hal::CurrentSense g_current;
 hal::MotorDriver g_motor;
 hal::Io g_io;
 hal::Storage g_storage;
+hal::NetStore g_netStore;
+hal::NetLogger g_logger;
 
 #ifdef DG_WOKWI
 sim::Rake g_rake;
@@ -130,6 +141,7 @@ sim::Rake g_rake;
 uint32_t g_nextSafetyMs = 0;
 uint32_t g_nextControlMs = 0;
 uint32_t g_nextStatMs = 0;
+uint32_t g_nextNetStatMs = 0;
 uint32_t g_lastSafetyRunMs = 0; // real elapsed time, for the simulated rake
 
 // Worst-case section times for the current #STAT window, in microseconds.
@@ -167,6 +179,37 @@ bool g_holdLatch = false;
 dg::MotorCmd g_lastCmd = dg::MotorCmd::STOP;
 dg::MotionStatus g_lastStatus = dg::MotionStatus::IDLE;
 uint8_t g_lastRetries = 0;
+
+#ifdef DG_NET_DEBUG
+// "net off" / "net on" from the serial terminal, so the offline path can be
+// exercised in Wokwi. Reads only what is already buffered - never waits.
+char g_cmd[24];
+uint8_t g_cmdLen = 0;
+
+void pollSerialCommand() {
+  while (Serial.available() > 0) {
+    const int c = Serial.read();
+    if (c == '\r' || c == '\n') {
+      if (g_cmdLen == 0) {
+        continue;
+      }
+      g_cmd[g_cmdLen] = '\0';
+      if (strcmp(g_cmd, "net off") == 0) {
+        g_logger.setNetEnabled(false);
+        Serial.print("#NET,debug,net=off\r\n");
+      } else if (strcmp(g_cmd, "net on") == 0) {
+        g_logger.setNetEnabled(true);
+        Serial.print("#NET,debug,net=on\r\n");
+      } else {
+        Serial.printf("#NET,debug,unknown=%s\r\n", g_cmd);
+      }
+      g_cmdLen = 0;
+    } else if (g_cmdLen + 1 < sizeof(g_cmd)) {
+      g_cmd[g_cmdLen++] = static_cast<char>(c);
+    }
+  }
+}
+#endif
 
 void printRecord(const dg::Record& r) {
   Serial.printf("#REC,%lu,%.2f,%.2f,%.2f,%u,%u,%u,%u\r\n",
@@ -227,6 +270,14 @@ void setup() {
         static_cast<unsigned>(g_current.zeroMv()));
   }
 
+  // One beginBoot() per boot: it increments bootId, so nothing else may call it.
+  const hal::NetPersist persisted = g_netStore.beginBoot();
+  if (!g_logger.begin(net::WIFI_SSID_STR, net::WIFI_PASS_STR,
+                      net::TS_CHANNEL_ID_STR, net::TS_WRITE_KEY_STR,
+                      persisted)) {
+    Serial.print("#NET,begin,fail\r\n");
+  }
+
   const uint32_t nowMs = millis();
   g_sensors.begin(nowMs);
   g_ctrl.begin(nowMs, saved.baselineValid, saved.baselineCm,
@@ -235,6 +286,7 @@ void setup() {
   g_nextSafetyMs = nowMs + cfg::SAFETY_TICK_MS;
   g_nextControlMs = nowMs + cfg::CONTROL_TICK_MS;
   g_nextStatMs = nowMs + kStatMs;
+  g_nextNetStatMs = nowMs + kNetStatMs;
   g_lastSafetyRunMs = nowMs;
 
   Serial.print("ms,U_cm,D_cm,diff_cm,state,current_A\r\n");
@@ -338,6 +390,8 @@ void loop() {
                   static_cast<unsigned>(g_ctrl.state()), g_current.amps());
     if (co.hasRecord) {
       printRecord(co.record);
+      // Zero-wait hand-off to the core-0 logger task.
+      g_logger.submit(co.record, nowMs);
     }
     keepMax(g_serialMaxUs, micros() - serialStartUs);
   }
@@ -358,6 +412,25 @@ void loop() {
     g_controlMaxUs = 0;
     g_serialMaxUs = 0;
   }
+
+  // ---- 60 s logger diagnostics -----------------------------------------
+  if (due(g_nextNetStatMs, nowMs, kNetStatMs)) {
+    const hal::LoggerStats& ns = g_logger.stats();
+    Serial.printf(
+        "#NET,STAT,heap=%lu,minheap=%lu,stack_hw=%lu,ring=%u,ok=%lu,fail=%lu,"
+        "drop=%lu\r\n",
+        static_cast<unsigned long>(ns.freeHeap),
+        static_cast<unsigned long>(ns.minFreeHeap),
+        static_cast<unsigned long>(ns.stackHighWater),
+        static_cast<unsigned>(ns.ringCount),
+        static_cast<unsigned long>(ns.uploadsOk),
+        static_cast<unsigned long>(ns.uploadsFailed),
+        static_cast<unsigned long>(g_logger.droppedTotal()));
+  }
+
+#ifdef DG_NET_DEBUG
+  pollSerialCommand();
+#endif
 
   keepMax(g_loopMaxUs, micros() - passStartUs);
 }
