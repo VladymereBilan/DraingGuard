@@ -55,6 +55,10 @@ void test_l32_outage_then_single_ordered_flush();
 void test_l33_pending_push_respects_permission();
 void test_l34_drop_accounting_covers_every_exit();
 
+// Upload response classification (D67)
+void test_l35_bulk_202_is_success();
+void test_l36_update_needs_nonzero_id();
+
 } // namespace dgtest
 
 #endif // DG_TESTS_LOGGER_H

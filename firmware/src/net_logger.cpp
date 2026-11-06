@@ -327,14 +327,12 @@ bool NetLogger::uploadOneLive() {
 
   int code = 0;
   lastUploadMs_ = millis();
-  const bool http200 =
-      postBody("/update", "application/x-www-form-urlencoded", g_formBuf, len,
-               g_respBuf, sizeof(g_respBuf), code);
+  postBody("/update", "application/x-www-form-urlencoded", g_formBuf, len,
+           g_respBuf, sizeof(g_respBuf), code);
 
-  // ThingSpeak answers 200 with the new entry id, or "0" when it rejected the
-  // update - so a 200 alone is not success.
-  const bool accepted = http200 && g_respBuf[0] != '\0' &&
-                        !(g_respBuf[0] == '0' && g_respBuf[1] == '\0');
+  // What counts as success is decided by a tested rule, not inline here (D67).
+  const bool accepted =
+      dg::classifyUpdate(code, g_respBuf) == dg::UploadResult::OK;
 
   if (accepted) {
     pending_.popOldest(sr);
@@ -404,10 +402,13 @@ bool NetLogger::flushRing() {
 
   int code = 0;
   lastUploadMs_ = millis();
-  const bool http200 =
-      postBody(g_pathBuf, "application/json", builder.body(),
-               builder.length(), g_respBuf, sizeof(g_respBuf), code);
-  const bool accepted = http200 && (strstr(g_respBuf, "success") != nullptr);
+  postBody(g_pathBuf, "application/json", builder.body(), builder.length(),
+           g_respBuf, sizeof(g_respBuf), code);
+
+  // The live endpoint answers 202 Accepted, not the 200 the docs describe, so
+  // the rule is a tested function rather than an inline guess (D67).
+  const bool accepted =
+      dg::classifyBulk(code, g_respBuf) == dg::UploadResult::OK;
 
   if (!accepted) {
     ++stats_.uploadsFailed;
@@ -420,7 +421,8 @@ bool NetLogger::flushRing() {
   ++stats_.bulkFlushes;
   stats_.uploadsOk += n;
   stats_.ringCount = ring_.count();
-  Serial.printf("#NET,bulk,n=%u,ok,ring=%u\r\n", static_cast<unsigned>(n),
+  Serial.printf("#NET,bulk,n=%u,ok,code=%d,ring=%u\r\n",
+                static_cast<unsigned>(n), code,
                 static_cast<unsigned>(ring_.count()));
   persistCounters();
   return true;

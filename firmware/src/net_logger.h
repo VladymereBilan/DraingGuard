@@ -22,6 +22,7 @@
 #include "dg_controller.h"
 #include "dg_pending.h"
 #include "dg_route.h"
+#include "dg_upload_result.h"
 #include "dg_record_codec.h"
 #include "dg_ring.h"
 #include "fs_slots.h"

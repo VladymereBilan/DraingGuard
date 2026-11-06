@@ -67,5 +67,9 @@ int main(int argc, char **argv) {
   RUN_TEST(dgtest::test_l33_pending_push_respects_permission);
   RUN_TEST(dgtest::test_l34_drop_accounting_covers_every_exit);
 
+  // Upload responses (D67)
+  RUN_TEST(dgtest::test_l35_bulk_202_is_success);
+  RUN_TEST(dgtest::test_l36_update_needs_nonzero_id);
+
   return UNITY_END();
 }

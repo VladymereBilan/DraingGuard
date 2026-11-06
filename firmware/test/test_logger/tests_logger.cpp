@@ -14,6 +14,7 @@
 #include "dg_ring.h"
 #include "dg_route.h"
 #include "dg_timestamp.h"
+#include "dg_upload_result.h"
 #include "fake_slots.h"
 
 namespace dgtest {
@@ -1104,6 +1105,68 @@ void test_l34_drop_accounting_covers_every_exit() {
   const uint32_t dropped = ring.stats().overwritten + 1u /*old boot*/ +
                            q.coalescedTotal() + 1u /*queue full*/;
   TEST_ASSERT_EQUAL_UINT32(5, dropped);
+}
+
+// 35 -----------------------------------------------------------------------
+// The live bulk endpoint answers 202 Accepted, not the 200 the docs describe.
+// Treating 202 as a failure left every flushed batch in the ring (D67).
+void test_l35_bulk_202_is_success() {
+  TEST_ASSERT_TRUE(dg::UploadResult::OK ==
+                   dg::classifyBulk(202, "{\"success\":true}"));
+  TEST_ASSERT_TRUE(dg::UploadResult::OK ==
+                   dg::classifyBulk(200, "{\"success\":true}"));
+
+  // Whitespace around the colon and the value is tolerated.
+  TEST_ASSERT_TRUE(dg::UploadResult::OK ==
+                   dg::classifyBulk(202, "{ \"success\" : true }"));
+  TEST_ASSERT_TRUE(dg::UploadResult::OK ==
+                   dg::classifyBulk(202, "{\n  \"success\":\ttrue\n}\r\n"));
+
+  // Accepted but explicitly unsuccessful: keep the records.
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED ==
+                   dg::classifyBulk(202, "{\"success\":false}"));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED ==
+                   dg::classifyBulk(200, "{\"success\":false}"));
+
+  // Rate limited, client errors, server errors, and a dead connection.
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED ==
+                   dg::classifyBulk(429, "{\"success\":true}"));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyBulk(400, ""));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyBulk(401, ""));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyBulk(413, ""));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyBulk(500, ""));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyBulk(0, ""));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyBulk(-1, nullptr));
+
+  // Right code, body that says nothing useful.
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyBulk(202, ""));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED ==
+                   dg::classifyBulk(202, "<html>Accepted</html>"));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED ==
+                   dg::classifyBulk(202, "{\"successful\":true}"));
+}
+
+// 36 -----------------------------------------------------------------------
+void test_l36_update_needs_nonzero_id() {
+  TEST_ASSERT_TRUE(dg::UploadResult::OK == dg::classifyUpdate(200, "17"));
+  TEST_ASSERT_TRUE(dg::UploadResult::OK == dg::classifyUpdate(200, "1"));
+  TEST_ASSERT_TRUE(dg::UploadResult::OK == dg::classifyUpdate(200, "74\r\n"));
+
+  // "0" is ThingSpeak rejecting the write behind a 200.
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyUpdate(200, "0"));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyUpdate(200, "000"));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyUpdate(200, ""));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED ==
+                   dg::classifyUpdate(200, "   \r\n"));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED ==
+                   dg::classifyUpdate(200, "not an id"));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyUpdate(200, "17x"));
+
+  // 202 is not success for this endpoint; only the bulk one behaves that way.
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyUpdate(202, "17"));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyUpdate(429, "17"));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyUpdate(500, ""));
+  TEST_ASSERT_TRUE(dg::UploadResult::FAILED == dg::classifyUpdate(200, nullptr));
 }
 
 } // namespace dgtest
