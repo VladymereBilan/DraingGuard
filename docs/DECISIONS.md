@@ -41,3 +41,9 @@ D38 Yellow LED = motor moving: HOMING and CLEARING, including jam recovery.
 D39 Events are never dropped: the Controller queues pending events (capacity >= 4) and emits at most one record per tick, events before snapshots.
 D40 Motion jobs check switches before moving: HOME with home already pressed -> DONE, no motor movement; SWEEP with end already pressed skips the lower stroke; home and end pressed together at any time -> STOP + FAILED_TIMEOUT.
 D41 Accepted from the S2 plan: CONFIRMING aborts to MONITORING on invalid data; jam during HOME -> immediate FAILED_TIMEOUT; no jam detection during the 0.5 s reverse pulse; records carry the filter's frozen value when a sensor is invalid.
+D42 ACS712 zero is calibrated at boot with the motor stopped (64-sample avg). If it is outside ACS_ZERO_MIN/MAX_MV, use 1667 mV and print a "#WARN" line; no fault code. Travel timeouts still protect the motor.
+D43 The 10 us HC-SR04 trigger pulse (delayMicroseconds) is the only permitted busy-wait.
+D44 Wokwi build only (DG_WOKWI): a simulated rake drives the limit-switch inputs from the motor commands (3 s full stroke, starts at mid-travel); the HOME/END buttons can still force a switch pressed.
+D45 Serial: one CSV line per controller tick (200 ms) "ms,U_cm,D_cm,diff_cm,state,current_A"; each Record also prints as "#REC,ms,U,D,diff,state,cycles,fault,event"; "#STAT,..." every 10 s; all lines CRLF.
+D46 Event records carry the state the event happened in (fault records read 4), as implemented in S2b.
+D47 A limit switch counts as pressed after 2 consecutive LOW reads (20 ms).

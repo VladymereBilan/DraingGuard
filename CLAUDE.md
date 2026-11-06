@@ -9,8 +9,10 @@ the original design document and is not rewritten as decisions supersede it.
 ## Firmware rules
 
 - **No blocking.** No `delay()`, no `pulseIn()`, no busy-waits anywhere in `firmware/src`
-  or `firmware/lib`. Timing comes from `millis()` / `micros()`. `firmware/legacy/` is
-  exempt — it is the archived v0.2 prototype and is never built.
+  or `firmware/lib`. Timing comes from `millis()` / `micros()`. The single exception is
+  the 10 µs `delayMicroseconds()` HC-SR04 trigger pulse in `hal_sensors.cpp` (D43);
+  nothing else may busy-wait. `firmware/legacy/` is exempt — it is the archived v0.2
+  prototype and is never built.
 - **Pure logic goes in `firmware/lib/dg_core`.** No `Arduino.h`, no heap, fixed-size
   arrays. Configure it through `Params` structs passed in by the caller, never by reading
   globals, and unit-test it on the `native` environment.
