@@ -108,7 +108,8 @@ inline constexpr uint32_t CONFIRM_MS = 10000;       // CALIBRATE - threshold mus
 inline constexpr uint32_t SETTLE_MS = 15000;        // CALIBRATE - wait after a cycle before re-measuring
 inline constexpr float VERIFY_MARGIN_CM = 1.0f;     // how far back under threshold counts as cleared
 inline constexpr uint8_t MAX_CYCLES = 3;            // clearing cycles before declaring "still blocked"
-inline constexpr uint32_t FAULT_AUTORECOVER_MS = 60000;   // auto-retry a latched fault after this (D16)
+inline constexpr uint32_t FAULT_AUTORECOVER_MS = 60000;   // auto-retry a latched fault after this (D16, faults 3/5 only per D33)
+inline constexpr uint32_t SENSOR_FAULT_MS = 60000;        // either sensor invalid this long -> FAULT_SENSOR (D32)
 inline constexpr float BASELINE_REJECT_CM = THRESHOLD_CM; // reject a saved-vs-new baseline gap wider than this (D15)
 
 // ---------------------------------------------------------------------------
@@ -142,6 +143,7 @@ inline constexpr uint8_t FAULT_JAM_CLEARED_BY_RETRY = 1;
 inline constexpr uint8_t FAULT_JAM_NOT_CLEARED = 2;
 inline constexpr uint8_t FAULT_STILL_BLOCKED = 3;   // still blocked after MAX_CYCLES cycles
 inline constexpr uint8_t FAULT_HOMING_FAILED = 4;
+inline constexpr uint8_t FAULT_SENSOR = 5;          // a sensor stayed invalid for SENSOR_FAULT_MS (D32)
 
 // ---------------------------------------------------------------------------
 // Event codes
@@ -151,6 +153,8 @@ inline constexpr uint8_t EVENT_CLEARED_VERIFIED = 1;
 inline constexpr uint8_t EVENT_FAULT = 2;
 inline constexpr uint8_t EVENT_FAULT_RECOVERED = 3;
 inline constexpr uint8_t EVENT_BIN_EMPTIED = 4;
+inline constexpr uint8_t EVENT_BASELINE_REJECTED = 5; // new baseline discarded, saved one kept (D31)
+inline constexpr uint8_t EVENT_JAM_RETRY_CLEARED = 6; // sweep finished but fought a jam (D31)
 
 } // namespace cfg
 

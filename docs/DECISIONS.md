@@ -30,3 +30,14 @@ D27 Speed of sound 0.0343 cm/us, no temperature compensation.
 D28 Channels: DrainGuard-dev = 3568459 (Wokwi + fake writer), DrainGuard = 3568466 (real hardware + trials). Firmware uses dev until the trial run.
 D29 Control split: a fast MotionSupervisor (10 ms) executes motion jobs; the Controller (200 ms) owns states and records. Final shape set by the S2 plan.
 D30 Where docs/DECISIONS.md and docs/spec.md differ, DECISIONS wins.
+D31 Event 5 = baseline rejected (saved kept); event 6 = jam cleared by retry (fault 1 record).
+D32 Fault 5 = sensor fault: either sensor invalid continuously for SENSOR_FAULT_MS (60 s) in BASELINE, MONITORING, CONFIRMING or SETTLING -> FAULT 5. No unbounded holds.
+D33 FAULT auto-recovery (diff <= baseline + VERIFY_MARGIN_CM for 60 s, both sensors valid) applies only to faults 3 and 5. Faults 2 and 4 clear only with the 3 s button hold.
+D34 After the post-fault re-home: -> MONITORING if a baseline exists, else -> BASELINE.
+D35 Field 5 = cyclesSinceEmptied, incremented on each completed sweep (DONE / DONE_AFTER_RETRY); the per-blockage cycle count (max 3) is internal.
+D36 Fault 1 is informational: set on DONE_AFTER_RETRY, persists through the episode, reset to 0 on event 1 or event 3; overwritten by 2/3/4/5.
+D37 Short press = bin emptied in any state; the 3 s hold acts only in FAULT; a hold never also counts as a short press.
+D38 Yellow LED = motor moving: HOMING and CLEARING, including jam recovery.
+D39 Events are never dropped: the Controller queues pending events (capacity >= 4) and emits at most one record per tick, events before snapshots.
+D40 Motion jobs check switches before moving: HOME with home already pressed -> DONE, no motor movement; SWEEP with end already pressed skips the lower stroke; home and end pressed together at any time -> STOP + FAILED_TIMEOUT.
+D41 Accepted from the S2 plan: CONFIRMING aborts to MONITORING on invalid data; jam during HOME -> immediate FAILED_TIMEOUT; no jam detection during the 0.5 s reverse pulse; records carry the filter's frozen value when a sensor is invalid.
